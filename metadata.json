@@ -1,0 +1,12 @@
+{
+  "name": "WongCapture - Screen Recorder",
+  "description": "Lightweight Windows-style screen recorder with direct MP4 export, webcam overlay, and clip trimmer.",
+  "requestFramePermissions": [
+    "display-capture",
+    "microphone",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
