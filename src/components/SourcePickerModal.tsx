@@ -26,6 +26,7 @@ interface SourcePickerModalProps {
   onChangeCropRegion: (newCrop: CropRegion) => void;
   onStartAreaSelection: () => void;
   hasActiveScreen: boolean;
+  initialTab?: 'windows' | 'screens' | 'area';
 }
 
 export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
@@ -37,8 +38,9 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
   onChangeCropRegion,
   onStartAreaSelection,
   hasActiveScreen,
+  initialTab,
 }) => {
-  const [activeTab, setActiveTab] = React.useState<'windows' | 'screens' | 'area'>('windows');
+  const [activeTab, setActiveTab] = React.useState<'windows' | 'screens' | 'area'>(initialTab || 'windows');
   const [searchQuery, setSearchQuery] = React.useState('');
   const [sources, setSources] = React.useState<DesktopCaptureSource[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -52,7 +54,7 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
         const fetched = await window.wongCapture.getSources();
         setSources(fetched);
         const hasWindows = fetched.some((s) => !s.isScreen);
-        if (!hasWindows) {
+        if (!hasWindows && (!initialTab || initialTab === 'windows')) {
           setActiveTab('screens');
         }
       } catch (err) {
@@ -63,16 +65,21 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
     } else {
       setHasElectronCapture(false);
       // In web browser, default to area or screens
-      setActiveTab('area');
+      if (!initialTab) {
+        setActiveTab('area');
+      }
     }
-  }, []);
+  }, [initialTab]);
 
   React.useEffect(() => {
     if (isOpen) {
+      if (initialTab) {
+        setActiveTab(initialTab);
+      }
       loadSources();
       setSearchQuery('');
     }
-  }, [isOpen, loadSources]);
+  }, [isOpen, initialTab, loadSources]);
 
   if (!isOpen) return null;
 
