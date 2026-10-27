@@ -7,5 +7,12 @@ declare global {
       sendState: (status: string, elapsedSeconds: number) => void;
       onCommand: (callback: (command: TrayCommand) => void) => () => void;
     };
+    wongWindow?: {
+      minimize: () => void;
+      maximize: () => void;
+      close: () => void;
+      setAlwaysOnTop: (pinned: boolean) => void;
+      onMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
+    };
   }
 }

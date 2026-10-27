@@ -13,6 +13,13 @@ let shownHiddenHint = false;
 const VALID_STATUSES = new Set(['idle', 'countdown', 'recording', 'paused', 'processing']);
 const isActive = () => ['countdown', 'recording', 'paused', 'processing'].includes(recState.status);
 
+// Performance optimizations for Windows screen recording:
+// 1. Prevent Windows OS native window occlusion from pausing/throttling background render loop
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// 2. Enable GPU rasterization and zero-copy memory buffers for 60fps canvas compositing
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -21,12 +28,7 @@ function createWindow() {
     minHeight: 360,
     title: 'WongCapture - Screen Recorder',
     backgroundColor: '#0a0a0a',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#171717',
-      symbolColor: '#ffffff',
-      height: 40,
-    },
+    frame: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -47,6 +49,13 @@ function createWindow() {
   }
 
   mainWindow = win;
+  
+  win.on('maximize', () => {
+    if (!win.isDestroyed()) win.webContents.send('window:isMaximized', true);
+  });
+  win.on('unmaximize', () => {
+    if (!win.isDestroyed()) win.webContents.send('window:isMaximized', false);
+  });
 
   // Closing the window while a recording is running must not kill (or lose) it: keep it alive in the tray.
   win.on('close', (event) => {
@@ -204,6 +213,27 @@ ipcMain.on('tray:state', (event, payload) => {
   if (quitWhenIdle && recState.status === 'idle') {
     isQuitting = true;
     app.quit();
+  }
+});
+
+ipcMain.on('window:minimize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+});
+
+ipcMain.on('window:maximize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+  }
+});
+
+ipcMain.on('window:close', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+});
+
+ipcMain.on('window:pin', (_event, pinned) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(!!pinned, 'screen-saver');
   }
 });
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   Minus, 
   Square, 
+  Copy,
   X, 
   Pin, 
   PinOff, 
@@ -34,8 +35,29 @@ export const WindowsTitleBar: React.FC<WindowsTitleBarProps> = ({
   onOpenLibrary,
   clipCount,
 }) => {
+  const [isWindowMaximized, setIsWindowMaximized] = React.useState(false);
+
+  React.useEffect(() => {
+    return window.wongWindow?.onMaximizedChange?.((isMax) => {
+      setIsWindowMaximized(isMax);
+    });
+  }, []);
+
+  const handleDoubleClickHeader = (e: React.MouseEvent) => {
+    // Only trigger if double clicking the draggable bar, not child buttons
+    if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'DIV' || (e.target as HTMLElement).tagName === 'SPAN') {
+      if (window.wongWindow) {
+        window.wongWindow.maximize();
+      }
+    }
+  };
+
   return (
-    <header className="h-10 bg-neutral-900/90 backdrop-blur-md border-b border-neutral-800/80 flex items-center justify-between px-3 select-none text-xs text-neutral-300 shrink-0 z-50">
+    <header 
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      onDoubleClick={handleDoubleClickHeader}
+      className="h-10 bg-neutral-900/90 backdrop-blur-md border-b border-neutral-800/80 flex items-center justify-between px-3 select-none text-xs text-neutral-300 shrink-0 z-50 cursor-default"
+    >
       {/* Zone 1: App Brand & Window Name */}
       <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
         <div className="w-5 h-5 rounded bg-sky-600 flex items-center justify-center text-white shadow-sm shadow-sky-500/20">
@@ -49,7 +71,10 @@ export const WindowsTitleBar: React.FC<WindowsTitleBarProps> = ({
       </div>
 
       {/* Zone 2: Navigation & Quick Views */}
-      <nav className="flex items-center gap-2 shrink-0">
+      <nav 
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        className="flex items-center gap-2 shrink-0"
+      >
         <button
           onClick={onOpenLibrary}
           className="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors cursor-pointer"
@@ -75,9 +100,15 @@ export const WindowsTitleBar: React.FC<WindowsTitleBarProps> = ({
       </nav>
 
       {/* Zone 3: Windows Window Controls */}
-      <div className="flex items-center gap-1 shrink-0">
+      <div 
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        className="flex items-center gap-1 shrink-0"
+      >
         <button
-          onClick={onTogglePin}
+          onClick={() => {
+            onTogglePin();
+            window.wongWindow?.setAlwaysOnTop(!isPinned);
+          }}
           className={`p-1.5 rounded transition-colors cursor-pointer ${
             isPinned ? 'text-sky-400 bg-sky-950/50' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
           }`}
@@ -95,25 +126,41 @@ export const WindowsTitleBar: React.FC<WindowsTitleBarProps> = ({
         </button>
 
         <button
-          onClick={() => {}}
-          className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+          onClick={() => {
+            if (window.wongWindow) {
+              window.wongWindow.minimize();
+            }
+          }}
+          className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
           title="Minimize"
         >
           <Minus className="w-3.5 h-3.5" />
         </button>
 
         <button
-          onClick={onToggleCompact}
-          className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-          title="Maximize"
+          onClick={() => {
+            if (window.wongWindow) {
+              window.wongWindow.maximize();
+            } else {
+              onToggleCompact();
+            }
+          }}
+          className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+          title={isWindowMaximized ? 'Restore Down' : 'Maximize'}
         >
-          <Square className="w-3 h-3" />
+          {isWindowMaximized ? <Copy className="w-3 h-3 rotate-180" /> : <Square className="w-3 h-3" />}
         </button>
 
         <button
-          onClick={() => window.location.reload()}
-          className="p-1.5 rounded hover:bg-rose-600 hover:text-white text-neutral-400 transition-colors"
-          title="Reset"
+          onClick={() => {
+            if (window.wongWindow) {
+              window.wongWindow.close();
+            } else {
+              window.location.reload();
+            }
+          }}
+          className="p-1.5 rounded hover:bg-rose-600 hover:text-white text-neutral-400 transition-colors cursor-pointer"
+          title="Close WongCapture"
         >
           <X className="w-3.5 h-3.5" />
         </button>

@@ -14,3 +14,15 @@ contextBridge.exposeInMainWorld('wongTray', {
     return () => ipcRenderer.removeListener('tray:command', handler);
   },
 });
+
+contextBridge.exposeInMainWorld('wongWindow', {
+  minimize: () => ipcRenderer.send('window:minimize'),
+  maximize: () => ipcRenderer.send('window:maximize'),
+  close: () => ipcRenderer.send('window:close'),
+  setAlwaysOnTop: (pinned) => ipcRenderer.send('window:pin', pinned),
+  onMaximizedChange: (callback) => {
+    const handler = (_event, isMax) => callback(isMax);
+    ipcRenderer.on('window:isMaximized', handler);
+    return () => ipcRenderer.removeListener('window:isMaximized', handler);
+  },
+});
