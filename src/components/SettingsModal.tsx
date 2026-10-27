@@ -7,7 +7,8 @@ import {
   Keyboard, 
   FileVideo, 
   Sparkles,
-  Info
+  Info,
+  ShieldCheck
 } from 'lucide-react';
 import { RecordingSettings, VideoResolution, VideoFrameRate, VideoFormat } from '../types';
 import { getSupportedFormats } from '../utils/mp4Converter';
@@ -178,6 +179,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <p className="text-[11px] text-neutral-500">
               Files will be saved as: <code className="font-mono text-neutral-400">{settings.filenamePrefix || 'WongCapture'}_YYYY-MM-DD_HH-mm-ss.{settings.format}</code>
             </p>
+          </div>
+
+          {/* Anti-Mirror & Recording Behavior */}
+          <div className="space-y-3 p-3.5 bg-neutral-950/60 border border-neutral-800 rounded-xl">
+            <div className="flex items-center gap-2 text-xs font-semibold text-neutral-200">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>Anti-Mirror & Recording Automation</span>
+            </div>
+
+            <div className="space-y-2.5">
+              {/* Prevent Mirror Loop Toggle */}
+              <label className="flex items-start justify-between gap-3 cursor-pointer">
+                <div>
+                  <span className="text-xs font-medium text-neutral-200 block">
+                    Prevent Infinite Screen Mirror Loop
+                  </span>
+                  <span className="text-[11px] text-neutral-400 block leading-tight">
+                    Automatically shields preview during full-screen recording to eliminate recursive feedback.
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.preventMirrorLoop !== false}
+                  onChange={(e) => onUpdateSettings({ preventMirrorLoop: e.target.checked })}
+                  className="mt-0.5 rounded border-neutral-700 text-sky-600 focus:ring-sky-500 bg-neutral-800"
+                />
+              </label>
+
+              {/* Auto-Minimize on Record */}
+              <label className="flex items-start justify-between gap-3 cursor-pointer">
+                <div>
+                  <span className="text-xs font-medium text-neutral-200 block">
+                    Auto-Minimize Window on Record
+                  </span>
+                  <span className="text-[11px] text-neutral-400 block leading-tight">
+                    Minimizes WongCapture to the tray/taskbar when recording starts so your desktop stays clear.
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={!!settings.autoMinimizeOnRecord}
+                  onChange={(e) => onUpdateSettings({ autoMinimizeOnRecord: e.target.checked })}
+                  className="mt-0.5 rounded border-neutral-700 text-sky-600 focus:ring-sky-500 bg-neutral-800"
+                />
+              </label>
+
+              {/* Auto-Switch to Mini Bar */}
+              <label className="flex items-start justify-between gap-3 cursor-pointer">
+                <div>
+                  <span className="text-xs font-medium text-neutral-200 block">
+                    Auto-Switch to Mini Bar HUD
+                  </span>
+                  <span className="text-[11px] text-neutral-400 block leading-tight">
+                    Automatically collapses to the compact Floating Mini Bar widget when recording starts.
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={!!settings.autoSwitchToMiniBar}
+                  onChange={(e) => onUpdateSettings({ autoSwitchToMiniBar: e.target.checked })}
+                  className="mt-0.5 rounded border-neutral-700 text-sky-600 focus:ring-sky-500 bg-neutral-800"
+                />
+              </label>
+            </div>
           </div>
 
           {/* Keyboard Shortcuts Table */}

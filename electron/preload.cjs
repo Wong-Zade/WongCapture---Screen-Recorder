@@ -26,3 +26,8 @@ contextBridge.exposeInMainWorld('wongWindow', {
     return () => ipcRenderer.removeListener('window:isMaximized', handler);
   },
 });
+
+contextBridge.exposeInMainWorld('wongCapture', {
+  getSources: () => ipcRenderer.invoke('desktop:getSources'),
+  setPreferredSource: (sourceId) => ipcRenderer.invoke('desktop:setPreferredSource', sourceId),
+});

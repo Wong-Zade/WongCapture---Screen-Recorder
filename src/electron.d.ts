@@ -14,5 +14,16 @@ declare global {
       setAlwaysOnTop: (pinned: boolean) => void;
       onMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
     };
+    wongCapture?: {
+      getSources: () => Promise<Array<{
+        id: string;
+        name: string;
+        thumbnail: string;
+        appIcon: string | null;
+        isScreen: boolean;
+        display_id?: string;
+      }>>;
+      setPreferredSource: (sourceId: string) => Promise<boolean>;
+    };
   }
 }

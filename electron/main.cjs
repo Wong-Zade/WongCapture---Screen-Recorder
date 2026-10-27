@@ -237,8 +237,36 @@ ipcMain.on('window:pin', (_event, pinned) => {
   }
 });
 
-// Electron's getDisplayMedia() needs the main process to pick a real capture source.
-// callback() must receive { video: DesktopCapturerSource, audio?: 'loopback' } (not booleans).
+let preferredSourceId = null;
+
+// Expose open windows & screens to renderer for the source selector modal
+ipcMain.handle('desktop:getSources', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 360, height: 202 },
+      fetchWindowIcons: true,
+    });
+    return sources.map((s) => ({
+      id: s.id,
+      name: s.name,
+      thumbnail: s.thumbnail.toDataURL(),
+      appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
+      isScreen: s.id.startsWith('screen:'),
+      display_id: s.display_id,
+    }));
+  } catch (err) {
+    console.error('Failed to get desktop sources:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('desktop:setPreferredSource', (_event, sourceId) => {
+  preferredSourceId = sourceId;
+  return true;
+});
+
+// Electron's getDisplayMedia() handler - respects preferred source selected by user
 function registerDisplayMediaHandler() {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
@@ -247,11 +275,16 @@ function registerDisplayMediaHandler() {
         thumbnailSize: { width: 0, height: 0 },
       });
 
-      const screens = sources.filter((s) => s.id.startsWith('screen:'));
-      const primaryId = String(screen.getPrimaryDisplay().id);
-      // Default to the primary monitor, falling back to the first available source
-      const chosen =
-        screens.find((s) => s.display_id === primaryId) || screens[0] || sources[0];
+      let chosen = null;
+      if (preferredSourceId) {
+        chosen = sources.find((s) => s.id === preferredSourceId);
+      }
+
+      if (!chosen) {
+        const screens = sources.filter((s) => s.id.startsWith('screen:'));
+        const primaryId = String(screen.getPrimaryDisplay().id);
+        chosen = screens.find((s) => s.display_id === primaryId) || screens[0] || sources[0];
+      }
 
       if (!chosen) {
         callback({});

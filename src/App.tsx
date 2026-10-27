@@ -6,7 +6,8 @@ import {
   RecordedClip, 
   RecordingStatus,
   AutoZoomConfig,
-  CropRegion
+  CropRegion,
+  DesktopCaptureSource
 } from './types';
 import { WindowsTitleBar } from './components/WindowsTitleBar';
 import { FloatingBar } from './components/FloatingBar';
@@ -16,6 +17,7 @@ import { WebcamSettingsModal } from './components/WebcamSettingsModal';
 import { ClipPlayerModal } from './components/ClipPlayerModal';
 import { ClipLibrary } from './components/ClipLibrary';
 import { SettingsModal } from './components/SettingsModal';
+import { SourcePickerModal } from './components/SourcePickerModal';
 import { AudioMixer, AudioLevels } from './utils/audioMixer';
 import { VideoCompositor } from './utils/compositor';
 import { createRecorder, generateThumbnail, getSupportedFormats } from './utils/mp4Converter';
@@ -34,6 +36,9 @@ const DEFAULT_SETTINGS: RecordingSettings = {
   countdown: 3,
   bitrateKbps: 8000,
   filenamePrefix: 'WongCapture',
+  preventMirrorLoop: true,
+  autoMinimizeOnRecord: false,
+  autoSwitchToMiniBar: false,
 };
 
 const DEFAULT_AUDIO: AudioConfig = {
@@ -128,10 +133,13 @@ export default function App() {
   const [isWebcamModalOpen, setIsWebcamModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = React.useState(false);
+  const [isSourcePickerOpen, setIsSourcePickerOpen] = React.useState(false);
   const [selectedClip, setSelectedClip] = React.useState<RecordedClip | null>(null);
 
   // Streams & Engine
   const [screenStream, setScreenStream] = React.useState<MediaStream | null>(null);
+  const [selectedSourceName, setSelectedSourceName] = React.useState<string>('');
+  const [isWindowSource, setIsWindowSource] = React.useState<boolean>(false);
   const [webcamStream, setWebcamStream] = React.useState<MediaStream | null>(null);
   const [micStream, setMicStream] = React.useState<MediaStream | null>(null);
 
@@ -321,8 +329,18 @@ export default function App() {
     audioMixerRef.current.setSystemVolume(audioConfig.systemVolume);
   }, [audioConfig.systemVolume]);
 
-  // Screen selection
+  // Screen / Window selection
   const handleRequestScreen = async () => {
+    // If running in Electron desktop environment, open our dedicated SourcePickerModal
+    if (typeof window !== 'undefined' && window.wongCapture?.getSources) {
+      setIsSourcePickerOpen(true);
+      return;
+    }
+    // Otherwise open native browser picker
+    await acquireScreenStream();
+  };
+
+  const acquireScreenStream = async () => {
     try {
       const widthVal = settings.resolution === '4k' ? 3840 : settings.resolution === '1080p' ? 1920 : settings.resolution === '720p' ? 1280 : undefined;
       const heightVal = settings.resolution === '4k' ? 2160 : settings.resolution === '1080p' ? 1080 : settings.resolution === '720p' ? 720 : undefined;
@@ -339,6 +357,15 @@ export default function App() {
       const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
       setScreenStream(stream);
 
+      // Determine if selected source is a window or screen from the track label
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const label = track.label || '';
+        const isWindow = label.toLowerCase().includes('window') || (!label.toLowerCase().includes('screen') && label.length > 0);
+        setSelectedSourceName(label || (isWindow ? 'Application Window' : 'Entire Display'));
+        setIsWindowSource(isWindow);
+      }
+
       // Connect system audio if present
       if (stream.getAudioTracks().length > 0) {
         audioMixerRef.current.setSystemStream(stream, audioConfig.systemVolume);
@@ -350,6 +377,20 @@ export default function App() {
       };
     } catch (err) {
       console.warn('Screen selection cancelled or failed:', err);
+    }
+  };
+
+  const handleSelectDesktopSource = async (source: DesktopCaptureSource) => {
+    setIsSourcePickerOpen(false);
+    try {
+      if (typeof window !== 'undefined' && window.wongCapture?.setPreferredSource) {
+        await window.wongCapture.setPreferredSource(source.id);
+      }
+      setSelectedSourceName(source.name);
+      setIsWindowSource(!source.isScreen);
+      await acquireScreenStream();
+    } catch (err) {
+      console.error('Failed to select desktop source:', err);
     }
   };
 
@@ -372,6 +413,13 @@ export default function App() {
   // Recording Execution
   const executeStartRecording = async (activeScreenStream: MediaStream) => {
     try {
+      // Automatic window adjustments on recording start
+      if (settings.autoMinimizeOnRecord && typeof window !== 'undefined' && window.wongWindow) {
+        window.wongWindow.minimize();
+      } else if (settings.autoSwitchToMiniBar) {
+        setIsCompact(true);
+      }
+
       recordedChunksRef.current = [];
 
       // Composite screen + webcam + crop + autozoom
@@ -738,6 +786,9 @@ export default function App() {
         <StudioPreview
           screenStream={screenStream}
           webcamStream={webcamStream}
+          sourceName={selectedSourceName}
+          isWindowSource={isWindowSource}
+          preventMirrorLoop={settings.preventMirrorLoop}
           status={status}
           countdownNumber={countdownNumber}
           elapsedSeconds={elapsedSeconds}
@@ -774,6 +825,7 @@ export default function App() {
           onOpenWebcamSettings={() => setIsWebcamModalOpen(true)}
           onTakeSnapshot={handleTakeSnapshot}
           onOpenMixer={() => setIsMixerOpen(true)}
+          onSwitchToCompact={() => setIsCompact(true)}
         />
 
         {/* Floating Mini Bar (when in compact mode or recording) */}
@@ -850,6 +902,17 @@ export default function App() {
         onSaveNewTrimmedClip={(newClip) => {
           saveClipToDB(newClip);
           setClips((prev) => [newClip, ...prev]);
+        }}
+      />
+
+      {/* Capture Source Picker Modal (Screens & Windows) */}
+      <SourcePickerModal
+        isOpen={isSourcePickerOpen}
+        onClose={() => setIsSourcePickerOpen(false)}
+        onSelectSource={handleSelectDesktopSource}
+        onSelectBrowserNative={async () => {
+          setIsSourcePickerOpen(false);
+          await acquireScreenStream();
         }}
       />
     </div>

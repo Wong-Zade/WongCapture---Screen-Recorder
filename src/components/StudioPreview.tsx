@@ -17,7 +17,15 @@ import {
   Crop, 
   RotateCcw,
   Sparkles,
-  MousePointerClick
+  MousePointerClick,
+  ShieldCheck,
+  ShieldAlert,
+  Eye,
+  EyeOff,
+  AppWindow,
+  Minus,
+  Minimize2,
+  Layers
 } from 'lucide-react';
 import { 
   RecordingStatus, 
@@ -33,6 +41,9 @@ import { SelectionToolOverlay } from './SelectionToolOverlay';
 interface StudioPreviewProps {
   screenStream: MediaStream | null;
   webcamStream: MediaStream | null;
+  sourceName?: string;
+  isWindowSource?: boolean;
+  preventMirrorLoop?: boolean;
   status: RecordingStatus;
   countdownNumber: number;
   elapsedSeconds: number;
@@ -62,11 +73,15 @@ interface StudioPreviewProps {
   onOpenWebcamSettings: () => void;
   onTakeSnapshot: () => void;
   onOpenMixer: () => void;
+  onSwitchToCompact?: () => void;
 }
 
 export const StudioPreview: React.FC<StudioPreviewProps> = ({
   screenStream,
   webcamStream,
+  sourceName,
+  isWindowSource = false,
+  preventMirrorLoop = true,
   status,
   countdownNumber,
   elapsedSeconds,
@@ -96,6 +111,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
   onOpenWebcamSettings,
   onTakeSnapshot,
   onOpenMixer,
+  onSwitchToCompact,
 }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -154,10 +170,22 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
 
   const isRecording = status === 'recording' || status === 'paused';
 
+  const [isShieldManualToggle, setIsShieldManualToggle] = React.useState<boolean | null>(null);
+
+  React.useEffect(() => {
+    if (status === 'idle') {
+      setIsShieldManualToggle(null);
+    }
+  }, [status]);
+
+  const shouldAutoShield = (isRecording || status === 'countdown') && !isWindowSource && preventMirrorLoop;
+  const isShielded = isShieldManualToggle !== null ? isShieldManualToggle : shouldAutoShield;
+
   // Handle click on the screen preview to trigger Auto-Zoom
   const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // If selecting area or dragging crop handles, don't trigger click zoom
     if (isSelectingArea) return;
+    if (isShielded) return;
     if (!containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
@@ -222,22 +250,135 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
         ref={containerRef}
         onClick={handlePreviewClick}
         className={`relative w-full max-w-5xl aspect-video bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center ${
-          screenStream ? (autoZoomConfig.enabled ? 'cursor-crosshair' : 'cursor-default') : ''
+          screenStream ? (!isShielded && autoZoomConfig.enabled ? 'cursor-crosshair' : 'cursor-default') : ''
         }`}
       >
         {screenStream ? (
           <>
-            {/* Live Screen Video Feed */}
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-contain bg-black pointer-events-none"
-            />
+            {/* When Anti-Mirror Shield is active: show the anti-mirror monitor instead of infinite recursive mirror */}
+            {isShielded ? (
+              <div className="absolute inset-0 bg-gradient-to-b from-neutral-900 via-neutral-950 to-neutral-950 flex flex-col items-center justify-center p-6 text-center select-none z-10">
+                {/* Visual Radar Indicator */}
+                <div className="relative mb-4 flex items-center justify-center">
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border shadow-xl ${
+                    status === 'recording'
+                      ? 'bg-rose-950/60 border-rose-600/60 text-rose-400 shadow-rose-900/30'
+                      : status === 'paused'
+                      ? 'bg-amber-950/60 border-amber-600/60 text-amber-400'
+                      : 'bg-sky-950/60 border-sky-600/60 text-sky-400'
+                  }`}>
+                    {isWindowSource ? <AppWindow className="w-8 h-8" /> : <Monitor className="w-8 h-8" />}
+                  </div>
+                  {status === 'recording' && (
+                    <div className="absolute -inset-1.5 rounded-2xl border-2 border-rose-500/30 animate-pulse pointer-events-none" />
+                  )}
+                </div>
+
+                {/* Source Badge */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${status === 'recording' ? 'bg-rose-500 animate-pulse' : 'bg-emerald-400'}`} />
+                  <span className="text-xs font-semibold text-neutral-200 uppercase tracking-wide">
+                    {status === 'recording' ? 'Recording in Progress' : status === 'paused' ? 'Recording Paused' : 'Capture Active'}
+                  </span>
+                  <span className="text-neutral-600">·</span>
+                  <span className="text-xs font-medium text-sky-400 bg-sky-950/70 border border-sky-800/60 px-2 py-0.5 rounded truncate max-w-xs">
+                    {sourceName || (isWindowSource ? 'Application Window' : 'Entire Display')}
+                  </span>
+                </div>
+
+                {/* Big Live Digital Clock */}
+                <div className="text-4xl md:text-5xl font-mono font-bold text-white tracking-wider tabular-nums mb-4 drop-shadow">
+                  {formatTime(elapsedSeconds)}
+                </div>
+
+                {/* Audio Levels VU Meters */}
+                <div className="w-full max-w-sm bg-neutral-900/90 border border-neutral-800/80 rounded-xl p-3 mb-4 space-y-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <Mic className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span className="text-[11px] text-neutral-400 w-7">Mic</span>
+                    <div className="flex-1 h-2 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
+                      <div
+                        className="h-full bg-emerald-400 transition-all duration-75"
+                        style={{ width: `${Math.round(micLevel * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <Volume2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="text-[11px] text-neutral-400 w-7">Sys</span>
+                    <div className="flex-1 h-2 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
+                      <div
+                        className="h-full bg-indigo-400 transition-all duration-75"
+                        style={{ width: `${Math.round(systemLevel * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Anti-Mirror Banner */}
+                <div className="max-w-md p-2.5 rounded-lg bg-sky-950/40 border border-sky-800/40 text-[11px] text-sky-200/90 flex items-center gap-2.5 mb-4 text-left">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>
+                    <strong>Anti-Mirror Shield Active:</strong> Infinite recursive screen tunnel is blocked. Video & audio are capturing smoothly in full HD 60 FPS.
+                  </span>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsShieldManualToggle(false);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow border border-neutral-700/60"
+                    title="Peek at the live display"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Peek Live Preview</span>
+                  </button>
+
+                  {onSwitchToCompact && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSwitchToCompact();
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow border border-neutral-700/60"
+                      title="Switch to compact Floating Mini HUD"
+                    >
+                      <Minimize2 className="w-3.5 h-3.5 text-neutral-400" />
+                      <span>Mini Bar HUD</span>
+                    </button>
+                  )}
+
+                  {typeof window !== 'undefined' && window.wongWindow && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.wongWindow?.minimize();
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow border border-neutral-700/60"
+                      title="Minimize WongCapture window to taskbar/tray"
+                    >
+                      <Minus className="w-3.5 h-3.5 text-neutral-400" />
+                      <span>Minimize Window</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* Live Screen Video Feed */
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-contain bg-black pointer-events-none"
+              />
+            )}
 
             {/* Selection Tool Overlay */}
-            {(isSelectingArea || cropRegion.enabled) && (
+            {!isShielded && (isSelectingArea || cropRegion.enabled) && (
               <SelectionToolOverlay
                 containerWidth={containerDim.width}
                 containerHeight={containerDim.height}
@@ -251,7 +392,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
             )}
 
             {/* Webcam PiP Overlay */}
-            {webcamConfig.enabled && webcamStream && (
+            {!isShielded && webcamConfig.enabled && webcamStream && (
               <div
                 onClick={(e) => {
                   e.stopPropagation();
@@ -277,57 +418,83 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
               </div>
             )}
 
-            {/* Top Bar HUD inside Video Canvas (Only when selection overlay is not overriding) */}
-            {!isSelectingArea && !cropRegion.enabled && (
-              <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-                <div className="flex items-center gap-2 pointer-events-auto">
-                  {isRecording ? (
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-950/85 backdrop-blur-md border border-neutral-700/80 rounded-lg text-xs font-mono font-medium shadow-lg">
-                      <span className={`w-2.5 h-2.5 rounded-full ${status === 'recording' ? 'bg-rose-500 animate-pulse' : 'bg-amber-400'}`} />
-                      <span className="text-white text-sm tabular-nums font-semibold tracking-wider">
-                        {formatTime(elapsedSeconds)}
-                      </span>
-                      <span className="text-neutral-500">|</span>
-                      <span className="text-sky-400 uppercase font-bold tracking-wider text-[11px]">
-                        {format}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-neutral-950/80 backdrop-blur-md border border-neutral-800 rounded-lg text-xs text-neutral-300">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span>Screen Ready</span>
-                      <span className="text-neutral-600">·</span>
-                      <span className="font-mono text-neutral-400">{recordedWidth} × {recordedHeight}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 pointer-events-auto">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onTakeSnapshot();
-                    }}
-                    className="px-2.5 py-1.5 bg-neutral-950/80 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-xs text-neutral-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow"
-                    title="Take instant snapshot"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>Snapshot</span>
-                  </button>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStopScreen();
-                    }}
-                    className="px-2.5 py-1.5 bg-neutral-950/80 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-xs text-neutral-400 hover:text-rose-400 transition-colors cursor-pointer"
-                    title="Change or stop sharing screen"
-                  >
-                    Change Source
-                  </button>
-                </div>
+            {/* Top Bar HUD inside Video Canvas */}
+            <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
+              <div className="flex items-center gap-2 pointer-events-auto">
+                {isRecording ? (
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-950/85 backdrop-blur-md border border-neutral-700/80 rounded-lg text-xs font-mono font-medium shadow-lg">
+                    <span className={`w-2.5 h-2.5 rounded-full ${status === 'recording' ? 'bg-rose-500 animate-pulse' : 'bg-amber-400'}`} />
+                    <span className="text-white text-sm tabular-nums font-semibold tracking-wider">
+                      {formatTime(elapsedSeconds)}
+                    </span>
+                    <span className="text-neutral-500">|</span>
+                    <span className="text-sky-400 uppercase font-bold tracking-wider text-[11px]">
+                      {format}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-3 py-1 bg-neutral-950/80 backdrop-blur-md border border-neutral-800 rounded-lg text-xs text-neutral-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="font-semibold text-neutral-200 truncate max-w-[180px]">
+                      {sourceName || (isWindowSource ? 'Window' : 'Screen')}
+                    </span>
+                    <span className="text-neutral-600">·</span>
+                    <span className="font-mono text-neutral-400">{recordedWidth} × {recordedHeight}</span>
+                  </div>
+                )}
               </div>
-            )}
+
+              <div className="flex items-center gap-2 pointer-events-auto">
+                {/* Anti-Mirror Shield Toggle Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsShieldManualToggle(!isShielded);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow border ${
+                    isShielded
+                      ? 'bg-emerald-950/80 border-emerald-700/80 text-emerald-300'
+                      : 'bg-neutral-950/80 hover:bg-neutral-800 border-neutral-800 text-neutral-300'
+                  }`}
+                  title={isShielded ? 'Click to show live screen preview' : 'Click to shield live preview and eliminate infinite mirror tunnel'}
+                >
+                  {isShielded ? (
+                    <>
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Mirror Shielded</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Shield Mirror</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTakeSnapshot();
+                  }}
+                  className="px-2.5 py-1.5 bg-neutral-950/80 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-xs text-neutral-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow"
+                  title="Take instant snapshot"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Snapshot</span>
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRequestScreen();
+                  }}
+                  className="px-2.5 py-1.5 bg-neutral-950/80 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-xs text-neutral-300 hover:text-sky-400 transition-colors cursor-pointer"
+                  title="Change screen or window source"
+                >
+                  Change Source
+                </button>
+              </div>
+            </div>
 
             {/* Auto-Zoom Click Hint Overlay */}
             {autoZoomConfig.enabled && !isRecording && (
@@ -367,8 +534,8 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
               onClick={onRequestScreen}
               className="w-full max-w-xs py-3 px-5 bg-sky-600 hover:bg-sky-500 active:bg-sky-700 text-white rounded-xl text-sm font-semibold shadow-lg shadow-sky-900/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
-              <Monitor className="w-4 h-4" />
-              <span>Select Screen to Record</span>
+              <Layers className="w-4 h-4" />
+              <span>Select Screen or Window</span>
             </button>
 
             <div className="mt-6 pt-5 border-t border-neutral-800/80 w-full grid grid-cols-3 gap-2 text-left">

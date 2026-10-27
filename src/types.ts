@@ -25,6 +25,15 @@ export interface AudioConfig {
   echoCancellation: boolean;
 }
 
+export interface DesktopCaptureSource {
+  id: string;
+  name: string;
+  thumbnail: string;
+  appIcon: string | null;
+  isScreen: boolean;
+  display_id?: string;
+}
+
 export interface RecordingSettings {
   resolution: VideoResolution;
   frameRate: VideoFrameRate;
@@ -32,6 +41,9 @@ export interface RecordingSettings {
   countdown: number; // 0, 3, 5
   bitrateKbps: number; // e.g. 5000, 8000, 12000
   filenamePrefix: string;
+  preventMirrorLoop: boolean; // Anti-mirror protection to shield preview during recording
+  autoMinimizeOnRecord: boolean; // Auto minimize window when recording starts
+  autoSwitchToMiniBar: boolean; // Auto switch to compact mini bar HUD when recording starts
 }
 
 export interface RecordedClip {
