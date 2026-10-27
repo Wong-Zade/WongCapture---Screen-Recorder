@@ -158,17 +158,6 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
         <ZoomIn className="w-4 h-4" />
       </button>
 
-      {/* Selection Crop toggle */}
-      <button
-        onClick={onToggleCrop}
-        className={`p-2 rounded-lg transition-colors cursor-pointer ${
-          cropRegion.enabled ? 'bg-sky-950/80 text-sky-400 border border-sky-800/60' : 'bg-neutral-800/40 text-neutral-500 hover:bg-neutral-800'
-        }`}
-        title={cropRegion.enabled ? `Recording Selected Area (${cropRegion.preset})` : 'Select Area to Record'}
-      >
-        <Crop className="w-4 h-4" />
-      </button>
-
       {/* Instant Snapshot */}
       <button
         onClick={onTakeSnapshot}

@@ -24,6 +24,7 @@ declare global {
         display_id?: string;
       }>>;
       setPreferredSource: (sourceId: string) => Promise<boolean>;
+      onAutoZoomTrigger?: (callback: (coords: { normX: number; normY: number }) => void) => () => void;
     };
   }
 }

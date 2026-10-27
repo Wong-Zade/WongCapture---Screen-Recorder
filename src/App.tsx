@@ -713,6 +713,13 @@ export default function App() {
     window.wongTray?.sendState(status, elapsedSeconds);
   }, [status, elapsedSeconds]);
 
+  // Listen for global tutorial click/hotkey zoom triggers from Electron
+  React.useEffect(() => {
+    return window.wongCapture?.onAutoZoomTrigger?.(({ normX, normY }) => {
+      handleTriggerClickZoom(normX, normY);
+    });
+  }, []);
+
   // Keyboard Shortcuts Listener
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -727,6 +734,13 @@ export default function App() {
         setIsSettingsOpen(false);
         setIsLibraryOpen(false);
         setSelectedClip(null);
+        return;
+      }
+
+      // F10 or Alt+Z triggers tutorial zoom
+      if (e.key === 'F10' || (e.altKey && (e.key === 'z' || e.key === 'Z'))) {
+        e.preventDefault();
+        handleTriggerClickZoom(0.5, 0.5);
         return;
       }
 
@@ -905,7 +919,7 @@ export default function App() {
         }}
       />
 
-      {/* Capture Source Picker Modal (Screens & Windows) */}
+      {/* Capture Source & Area Picker Modal */}
       <SourcePickerModal
         isOpen={isSourcePickerOpen}
         onClose={() => setIsSourcePickerOpen(false)}
@@ -914,6 +928,18 @@ export default function App() {
           setIsSourcePickerOpen(false);
           await acquireScreenStream();
         }}
+        cropRegion={cropRegion}
+        onChangeCropRegion={(newCrop) => {
+          setCropRegion(newCrop);
+          compositorRef.current.updateCropRegion(newCrop);
+        }}
+        onStartAreaSelection={() => {
+          if (!screenStream) {
+            handleRequestScreen();
+          }
+          setIsSelectingArea(true);
+        }}
+        hasActiveScreen={screenStream !== null}
       />
     </div>
   );

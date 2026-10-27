@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, desktopCapturer, screen, Tray, Menu, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, session, desktopCapturer, screen, Tray, Menu, nativeImage, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
 
 let mainWindow = null;
@@ -314,6 +314,28 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();
 
+    // Global tutorial zoom trigger: when F10 or Alt+Z is pressed anywhere in Windows,
+    // zoom smoothly into where the presenter's mouse cursor is pointing!
+    const triggerZoomAtCursor = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      try {
+        const point = screen.getCursorScreenPoint();
+        const primary = screen.getPrimaryDisplay();
+        const normX = Math.max(0, Math.min(1, (point.x - primary.bounds.x) / (primary.bounds.width || 1920)));
+        const normY = Math.max(0, Math.min(1, (point.y - primary.bounds.y) / (primary.bounds.height || 1080)));
+        mainWindow.webContents.send('autozoom:trigger', { normX, normY });
+      } catch (err) {
+        console.warn('Failed to calculate cursor zoom point:', err);
+      }
+    };
+
+    try {
+      globalShortcut.register('F10', triggerZoomAtCursor);
+      globalShortcut.register('Alt+Z', triggerZoomAtCursor);
+    } catch (err) {
+      console.warn('Could not register global zoom shortcuts:', err);
+    }
+
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -321,6 +343,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     isQuitting = true;
+    try {
+      globalShortcut.unregisterAll();
+    } catch (_) {}
   });
 
   app.on('window-all-closed', () => {

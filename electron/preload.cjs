@@ -30,4 +30,9 @@ contextBridge.exposeInMainWorld('wongWindow', {
 contextBridge.exposeInMainWorld('wongCapture', {
   getSources: () => ipcRenderer.invoke('desktop:getSources'),
   setPreferredSource: (sourceId) => ipcRenderer.invoke('desktop:setPreferredSource', sourceId),
+  onAutoZoomTrigger: (callback) => {
+    const handler = (_event, coords) => callback(coords);
+    ipcRenderer.on('autozoom:trigger', handler);
+    return () => ipcRenderer.removeListener('autozoom:trigger', handler);
+  },
 });

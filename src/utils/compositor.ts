@@ -145,29 +145,22 @@ export class VideoCompositor {
    * Triggers a click at normalized coordinates (0..1) relative to the visible preview
    */
   triggerClickZoom(normalizedX: number, normalizedY: number) {
-    // Add visual click ripple if enabled
-    if (this.autoZoomConfig?.showClickRipple) {
+    // Add visual click ripple & tutorial spotlight
+    if (this.autoZoomConfig?.showClickRipple !== false) {
       this.ripples.push({
         x: normalizedX,
         y: normalizedY,
         startTime: performance.now(),
-        maxRadius: 42,
+        maxRadius: 48,
       });
     }
 
     if (!this.autoZoomConfig?.enabled) return;
 
-    // If already zoomed in near this point, toggle back out
-    const dist = Math.hypot(this.targetPanX - normalizedX, this.targetPanY - normalizedY);
-    if (this.targetZoom > 1.1 && dist < 0.15) {
-      this.resetZoom();
-      return;
-    }
-
     // Zoom into the click point
-    this.targetZoom = this.autoZoomConfig.factor || 1.8;
-    this.targetPanX = Math.max(0.1, Math.min(0.9, normalizedX));
-    this.targetPanY = Math.max(0.1, Math.min(0.9, normalizedY));
+    this.targetZoom = this.autoZoomConfig.factor || 2.0;
+    this.targetPanX = Math.max(0.05, Math.min(0.95, normalizedX));
+    this.targetPanY = Math.max(0.05, Math.min(0.95, normalizedY));
 
     // Clear previous auto-reset timer
     if (this.zoomTimeoutId !== null) {
@@ -176,10 +169,11 @@ export class VideoCompositor {
     }
 
     // Auto glide back out after configured duration (if duration > 0)
-    if (this.autoZoomConfig.durationSeconds > 0) {
+    const duration = this.autoZoomConfig.durationSeconds || 2.5;
+    if (duration > 0) {
       this.zoomTimeoutId = window.setTimeout(() => {
         this.resetZoom();
-      }, this.autoZoomConfig.durationSeconds * 1000);
+      }, duration * 1000);
     }
   }
 
@@ -256,8 +250,8 @@ export class VideoCompositor {
       this.ctx.fillRect(0, 0, outW, outH);
     }
 
-    // 5. Draw animated click ripples
-    this.drawRipples(outW, outH);
+    // 5. Draw animated click ripples and tutorial spotlight
+    this.drawRipples(outW, outH, srcX, srcY, visibleW, visibleH, baseCropX, baseCropY, baseCropW, baseCropH);
 
     // 6. Draw webcam overlay if enabled
     if (
@@ -271,7 +265,18 @@ export class VideoCompositor {
     this.animFrameId = requestAnimationFrame(this.renderLoop);
   };
 
-  private drawRipples(canvasW: number, canvasH: number) {
+  private drawRipples(
+    canvasW: number,
+    canvasH: number,
+    srcX: number,
+    srcY: number,
+    visibleW: number,
+    visibleH: number,
+    baseCropX: number,
+    baseCropY: number,
+    baseCropW: number,
+    baseCropH: number
+  ) {
     if (!this.ctx || this.ripples.length === 0) return;
 
     const now = performance.now();
@@ -279,32 +284,51 @@ export class VideoCompositor {
 
     for (const r of this.ripples) {
       const elapsed = now - r.startTime;
-      const duration = 650; // ms
+      const duration = 800; // ms
       if (elapsed < duration) {
         activeRipples.push(r);
         const progress = elapsed / duration;
-        const radius = progress * r.maxRadius;
-        const alpha = Math.max(0, (1 - progress) * 0.85);
+        const radius = progress * r.maxRadius * (this.currentZoom > 1.1 ? 1.3 : 1.0);
+        const alpha = Math.max(0, (1 - progress) * 0.9);
 
-        const px = r.x * canvasW;
-        const py = r.y * canvasH;
+        // Project source click coordinates to current virtual camera canvas coordinates
+        const pointX = baseCropX + r.x * baseCropW;
+        const pointY = baseCropY + r.y * baseCropH;
+        const px = ((pointX - srcX) / visibleW) * canvasW;
+        const py = ((pointY - srcY) / visibleH) * canvasH;
 
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.arc(px, py, radius, 0, Math.PI * 2);
-        this.ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
-        this.ctx.lineWidth = 3;
-        this.ctx.stroke();
+        if (px >= -60 && px <= canvasW + 60 && py >= -60 && py <= canvasH + 60) {
+          this.ctx.save();
 
-        // Inner glowing core
-        if (progress < 0.4) {
-          const coreAlpha = (1 - progress / 0.4) * 0.9;
+          // Outer glowing ripple ring
           this.ctx.beginPath();
-          this.ctx.arc(px, py, 6 * (1 - progress), 0, Math.PI * 2);
-          this.ctx.fillStyle = `rgba(255, 255, 255, ${coreAlpha})`;
-          this.ctx.fill();
+          this.ctx.arc(px, py, radius, 0, Math.PI * 2);
+          this.ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
+          this.ctx.lineWidth = 3.5;
+          this.ctx.shadowColor = 'rgba(14, 165, 233, 0.8)';
+          this.ctx.shadowBlur = 12;
+          this.ctx.stroke();
+
+          // Echo ripple wave
+          if (progress > 0.15) {
+            const echoProgress = (progress - 0.15) / 0.85;
+            this.ctx.beginPath();
+            this.ctx.arc(px, py, echoProgress * (r.maxRadius * 0.75), 0, Math.PI * 2);
+            this.ctx.strokeStyle = `rgba(244, 63, 94, ${(1 - echoProgress) * 0.75})`;
+            this.ctx.lineWidth = 2.5;
+            this.ctx.stroke();
+          }
+
+          // Inner glowing core target
+          if (progress < 0.5) {
+            const coreAlpha = (1 - progress / 0.5) * 0.95;
+            this.ctx.beginPath();
+            this.ctx.arc(px, py, 7 * (1 - progress * 0.4), 0, Math.PI * 2);
+            this.ctx.fillStyle = `rgba(255, 255, 255, ${coreAlpha})`;
+            this.ctx.fill();
+          }
+          this.ctx.restore();
         }
-        this.ctx.restore();
       }
     }
 

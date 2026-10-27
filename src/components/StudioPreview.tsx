@@ -185,7 +185,6 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
   const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // If selecting area or dragging crop handles, don't trigger click zoom
     if (isSelectingArea) return;
-    if (isShielded) return;
     if (!containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
@@ -471,6 +470,21 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
                   )}
                 </button>
 
+                {/* Crop Region Badge if active */}
+                {cropRegion.enabled && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRequestScreen();
+                    }}
+                    className="px-2.5 py-1.5 bg-sky-950/80 hover:bg-sky-900/80 border border-sky-600/60 rounded-lg text-xs text-sky-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow"
+                    title="Custom crop region active. Click to adjust or change area."
+                  >
+                    <Crop className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Area: {cropRegion.preset.toUpperCase()}</span>
+                  </button>
+                )}
+
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -488,10 +502,11 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
                     e.stopPropagation();
                     onRequestScreen();
                   }}
-                  className="px-2.5 py-1.5 bg-neutral-950/80 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-xs text-neutral-300 hover:text-sky-400 transition-colors cursor-pointer"
-                  title="Change screen or window source"
+                  className="px-2.5 py-1.5 bg-neutral-950/80 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-xs text-neutral-300 hover:text-sky-400 transition-colors cursor-pointer flex items-center gap-1.5"
+                  title="Change screen, window, or custom recording area"
                 >
-                  Change Source
+                  <Layers className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Source & Area</span>
                 </button>
               </div>
             </div>
@@ -590,49 +605,36 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
           </button>
         )}
 
-        <div className="h-6 w-px bg-neutral-800 mx-0.5" />
-
-        {/* Selection Tool (Crop / Record Part of Screen) */}
-        <button
-          onClick={onToggleSelectingArea}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
-            cropRegion.enabled
-              ? 'bg-sky-950 text-sky-300 border border-sky-600/80'
-              : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white'
-          }`}
-          title="Select part of the screen to record (Aspect crop or custom region)"
-        >
-          <Crop className="w-4 h-4 text-sky-400" />
-          <span>{cropRegion.enabled ? `Region (${cropRegion.preset})` : 'Selection Tool'}</span>
-        </button>
-
         {/* Auto-Zoom on Clicks Control Group */}
-        <div className="flex items-center gap-1 p-1 bg-neutral-950/80 rounded-xl border border-neutral-800">
+        <div className="flex items-center gap-1.5 p-1 bg-neutral-950/80 rounded-xl border border-neutral-800">
           <button
             onClick={() => onUpdateAutoZoom({ enabled: !autoZoomConfig.enabled })}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
               autoZoomConfig.enabled
                 ? 'bg-sky-600 text-white shadow-sm'
                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
             }`}
-            title="Automatically zoom smoothly into where you click on screen"
+            title="Automatically zoom into clicked area for tutorials (F10 / Alt+Z / Click)"
           >
             <ZoomIn className="w-3.5 h-3.5" />
             <span>Auto Zoom</span>
+            <span className="text-[10px] px-1 py-0.2 rounded bg-neutral-900/90 text-sky-300 border border-neutral-700 font-mono">
+              F10
+            </span>
           </button>
 
           {autoZoomConfig.enabled && (
             <div className="flex items-center gap-1 px-1">
-              {[1.5, 2.0, 2.5].map((factor) => (
+              {[1.5, 2.0, 2.5, 3.0].map((factor) => (
                 <button
                   key={factor}
                   onClick={() => onUpdateAutoZoom({ factor })}
                   className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-colors cursor-pointer ${
                     autoZoomConfig.factor === factor
-                      ? 'bg-neutral-800 text-sky-300 font-bold border border-neutral-700'
+                      ? 'bg-sky-950 text-sky-300 font-bold border border-sky-600/70'
                       : 'text-neutral-500 hover:text-neutral-300'
                   }`}
-                  title={`Zoom scale ${factor}x`}
+                  title={`Zoom scale ${factor}x on clicks`}
                 >
                   {factor}x
                 </button>
@@ -641,10 +643,11 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
               {isZoomed && (
                 <button
                   onClick={onResetZoom}
-                  className="ml-1 p-1 text-neutral-400 hover:text-sky-300 transition-colors"
+                  className="ml-1 px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-xs font-mono text-sky-300 hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
                   title="Reset Zoom to 1.0x"
                 >
                   <RotateCcw className="w-3 h-3" />
+                  <span>1x</span>
                 </button>
               )}
             </div>
