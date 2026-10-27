@@ -23,7 +23,8 @@ import {
   saveClipToDB, 
   getAllClipsFromDB, 
   deleteClipFromDB, 
-  updateClipTitleInDB 
+  updateClipTitleInDB,
+  requestPersistentStorage
 } from './utils/storage';
 
 const DEFAULT_SETTINGS: RecordingSettings = {
@@ -152,6 +153,23 @@ export default function App() {
   const vuMeterIntervalRef = React.useRef<number | null>(null);
   const countdownIntervalRef = React.useRef<number | null>(null);
 
+  // Refs mirror live state so long-lived callbacks (onended, recorder.onstop, timers) never read stale values
+  const statusRef = React.useRef<RecordingStatus>('idle');
+  const screenStreamRef = React.useRef<MediaStream | null>(null);
+  const recordingStartRef = React.useRef(0);
+  const pausedAccumMsRef = React.useRef(0);
+  const pauseStartRef = React.useRef<number | null>(null);
+  const handleStopScreenRef = React.useRef<() => void>(() => {});
+  statusRef.current = status;
+  screenStreamRef.current = screenStream;
+
+  // Recorded time in ms, excluding paused time (frozen while paused)
+  const getElapsedMs = () => {
+    if (!recordingStartRef.current) return 0;
+    const now = pauseStartRef.current ?? Date.now();
+    return Math.max(0, now - recordingStartRef.current - pausedAccumMsRef.current);
+  };
+
   // Sync settings to localStorage
   React.useEffect(() => {
     localStorage.setItem('wongcapture_settings', JSON.stringify(settings));
@@ -178,7 +196,19 @@ export default function App() {
 
   // Load clips from IndexedDB on startup
   React.useEffect(() => {
+    requestPersistentStorage();
     getAllClipsFromDB().then(setClips).catch(console.warn);
+  }, []);
+
+  // Release everything on unmount (camera/mic/screen indicators, timers, compositor loop)
+  React.useEffect(() => {
+    return () => {
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      compositorRef.current.stop();
+      [timerIntervalRef, vuMeterIntervalRef, countdownIntervalRef].forEach((r) => {
+        if (r.current !== null) clearInterval(r.current);
+      });
+    };
   }, []);
 
   // VU Meter & Zoom State Loop
@@ -195,62 +225,91 @@ export default function App() {
     };
   }, []);
 
-  // Webcam stream management
+  // Webcam stream management (cleanup stops the camera when the device changes, it is disabled, or on unmount)
   React.useEffect(() => {
-    if (webcamConfig.enabled) {
-      const constraints: MediaStreamConstraints = {
-        video: {
-          deviceId: webcamConfig.deviceId ? { exact: webcamConfig.deviceId } : undefined,
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      };
-
-      navigator.mediaDevices?.getUserMedia(constraints)
-        .then((stream) => {
-          setWebcamStream(stream);
-        })
-        .catch((err) => {
-          console.warn('Failed to get webcam stream:', err);
-          setWebcamConfig((prev) => ({ ...prev, enabled: false }));
-        });
-    } else {
-      if (webcamStream) {
-        webcamStream.getTracks().forEach((t) => t.stop());
-        setWebcamStream(null);
-      }
+    if (!webcamConfig.enabled) {
+      setWebcamStream(null);
+      return;
     }
+
+    let cancelled = false;
+    let acquired: MediaStream | null = null;
+
+    const constraints: MediaStreamConstraints = {
+      video: {
+        deviceId: webcamConfig.deviceId ? { exact: webcamConfig.deviceId } : undefined,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    };
+
+    navigator.mediaDevices?.getUserMedia(constraints)
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        acquired = stream;
+        setWebcamStream(stream);
+      })
+      .catch((err) => {
+        console.warn('Failed to get webcam stream:', err);
+        if (!cancelled) setWebcamConfig((prev) => ({ ...prev, enabled: false }));
+      });
+
+    return () => {
+      cancelled = true;
+      const old = acquired;
+      old?.getTracks().forEach((t) => t.stop());
+      setWebcamStream((prev) => (prev === old ? null : prev));
+    };
   }, [webcamConfig.enabled, webcamConfig.deviceId]);
 
-  // Mic stream management
+  // Mic stream management (cleanup stops the previous stream when the device/processing options change)
   React.useEffect(() => {
-    if (audioConfig.microphone) {
-      const constraints: MediaStreamConstraints = {
-        audio: {
-          deviceId: audioConfig.micDeviceId ? { exact: audioConfig.micDeviceId } : undefined,
-          echoCancellation: audioConfig.echoCancellation,
-          noiseSuppression: audioConfig.noiseSuppression,
-        },
-        video: false,
-      };
-
-      navigator.mediaDevices?.getUserMedia(constraints)
-        .then((stream) => {
-          setMicStream(stream);
-          audioMixerRef.current.setMicStream(stream, audioConfig.micVolume);
-        })
-        .catch((err) => {
-          console.warn('Failed to get microphone stream:', err);
-          setAudioConfig((prev) => ({ ...prev, microphone: false }));
-        });
-    } else {
-      if (micStream) {
-        micStream.getTracks().forEach((t) => t.stop());
-        setMicStream(null);
-      }
+    if (!audioConfig.microphone) {
+      setMicStream(null);
       audioMixerRef.current.setMicStream(null);
+      return;
     }
+
+    let cancelled = false;
+    let acquired: MediaStream | null = null;
+
+    const constraints: MediaStreamConstraints = {
+      audio: {
+        deviceId: audioConfig.micDeviceId ? { exact: audioConfig.micDeviceId } : undefined,
+        echoCancellation: audioConfig.echoCancellation,
+        noiseSuppression: audioConfig.noiseSuppression,
+      },
+      video: false,
+    };
+
+    navigator.mediaDevices?.getUserMedia(constraints)
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        acquired = stream;
+        setMicStream(stream);
+        audioMixerRef.current.setMicStream(stream, audioConfig.micVolume);
+      })
+      .catch((err) => {
+        console.warn('Failed to get microphone stream:', err);
+        if (!cancelled) setAudioConfig((prev) => ({ ...prev, microphone: false }));
+      });
+
+    return () => {
+      cancelled = true;
+      const old = acquired;
+      if (old) {
+        audioMixerRef.current.setMicStream(null);
+        old.getTracks().forEach((t) => t.stop());
+      }
+      setMicStream((prev) => (prev === old ? null : prev));
+    };
   }, [audioConfig.microphone, audioConfig.micDeviceId, audioConfig.echoCancellation, audioConfig.noiseSuppression]);
 
   // Update mixer volume adjustments
@@ -287,7 +346,7 @@ export default function App() {
 
       // Handle user ending screen share from browser banner
       stream.getVideoTracks()[0].onended = () => {
-        handleStopScreen();
+        handleStopScreenRef.current();
       };
     } catch (err) {
       console.warn('Screen selection cancelled or failed:', err);
@@ -295,16 +354,20 @@ export default function App() {
   };
 
   const handleStopScreen = () => {
-    if (status === 'recording' || status === 'paused') {
+    const currentStatus = statusRef.current;
+    if (currentStatus === 'recording' || currentStatus === 'paused' || currentStatus === 'countdown') {
       handleStopRecording();
     }
-    if (screenStream) {
-      screenStream.getTracks().forEach((t) => t.stop());
+    const currentStream = screenStreamRef.current;
+    if (currentStream) {
+      currentStream.getTracks().forEach((t) => t.stop());
       setScreenStream(null);
     }
     audioMixerRef.current.setSystemStream(null);
     compositorRef.current.stop();
   };
+  // Always point at the latest version so the track's onended handler never sees stale state
+  handleStopScreenRef.current = handleStopScreen;
 
   // Recording Execution
   const executeStartRecording = async (activeScreenStream: MediaStream) => {
@@ -350,57 +413,84 @@ export default function App() {
       };
 
       recorder.onstop = async () => {
+        // Measure before anything else: real recorded time, excluding paused time
+        const durationSeconds = Math.max(1, Math.round(getElapsedMs() / 1000));
+        recordingStartRef.current = 0;
+        pausedAccumMsRef.current = 0;
+        pauseStartRef.current = null;
+
         setStatus('processing');
         if (timerIntervalRef.current !== null) {
           clearInterval(timerIntervalRef.current);
           timerIntervalRef.current = null;
         }
 
-        const mime = recorder.mimeType || (actualFormat === 'mp4' ? 'video/mp4' : 'video/webm');
-        const recordedBlob = new Blob(recordedChunksRef.current, { type: mime });
+        try {
+          const mime = recorder.mimeType || (actualFormat === 'mp4' ? 'video/mp4' : 'video/webm');
+          const recordedBlob = new Blob(recordedChunksRef.current, { type: mime });
 
-        // Calculate metadata
-        const now = new Date();
-        const timestampStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
-        const prefix = settings.filenamePrefix || 'WongCapture';
-        const title = `${prefix}_${timestampStr}.${actualFormat}`;
+          // Calculate metadata
+          const now = new Date();
+          const timestampStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+          const prefix = settings.filenamePrefix || 'WongCapture';
+          const title = `${prefix}_${timestampStr}.${actualFormat}`;
 
-        const videoSettings = videoTrack?.getSettings();
-        const width = videoSettings?.width || (cropRegion.enabled ? Math.round(1920 * cropRegion.width) : 1920);
-        const height = videoSettings?.height || (cropRegion.enabled ? Math.round(1080 * cropRegion.height) : 1080);
+          const videoSettings = videoTrack?.getSettings();
+          const width = videoSettings?.width || (cropRegion.enabled ? Math.round(1920 * cropRegion.width) : 1920);
+          const height = videoSettings?.height || (cropRegion.enabled ? Math.round(1080 * cropRegion.height) : 1080);
 
-        const thumbnailUrl = await generateThumbnail(recordedBlob);
+          let thumbnailUrl = '';
+          try {
+            thumbnailUrl = await generateThumbnail(recordedBlob);
+          } catch (err) {
+            console.warn('Thumbnail generation failed:', err);
+          }
 
-        const newClip: RecordedClip = {
-          id: `clip_${Date.now()}`,
-          title,
-          timestamp: Date.now(),
-          duration: elapsedSeconds || 1,
-          blob: recordedBlob,
-          url: URL.createObjectURL(recordedBlob),
-          thumbnailUrl,
-          format: actualFormat,
-          sizeBytes: recordedBlob.size,
-          width,
-          height,
-          fps: settings.frameRate,
-        };
+          const newClip: RecordedClip = {
+            id: `clip_${Date.now()}`,
+            title,
+            timestamp: Date.now(),
+            duration: durationSeconds,
+            blob: recordedBlob,
+            url: URL.createObjectURL(recordedBlob),
+            thumbnailUrl,
+            format: actualFormat,
+            sizeBytes: recordedBlob.size,
+            width,
+            height,
+            fps: settings.frameRate,
+          };
 
-        await saveClipToDB(newClip);
-        setClips((prev) => [newClip, ...prev]);
-        setSelectedClip(newClip);
-        setStatus('idle');
-        setElapsedSeconds(0);
+          const saved = await saveClipToDB(newClip);
+          setClips((prev) => [newClip, ...prev]);
+          setSelectedClip(newClip);
+          if (!saved) {
+            window.alert(
+              'The recording finished, but it could not be saved to your clip library (storage may be full or blocked).\n\n' +
+              'It is open in the player now — use the download button to keep a copy before closing it.'
+            );
+          }
+        } catch (err) {
+          console.error('Failed to finalize recording:', err);
+          window.alert('Something went wrong while finishing the recording.');
+        } finally {
+          setStatus('idle');
+          setElapsedSeconds(0);
+        }
       };
 
       recorder.start(1000); // 1-second chunks
       mediaRecorderRef.current = recorder;
+      recordingStartRef.current = Date.now();
+      pausedAccumMsRef.current = 0;
+      pauseStartRef.current = null;
       setStatus('recording');
       setElapsedSeconds(0);
 
+      // Derive elapsed time from the clock (frozen while paused) instead of counting ticks
       timerIntervalRef.current = window.setInterval(() => {
-        setElapsedSeconds((prev) => prev + 1);
-      }, 1000);
+        setElapsedSeconds(Math.floor(getElapsedMs() / 1000));
+      }, 250);
     } catch (err) {
       console.error('Failed to start recorder:', err);
       setStatus('idle');
@@ -408,6 +498,8 @@ export default function App() {
   };
 
   const handleStartRecording = async () => {
+    // Ignore re-entry (double click, F9 mashing) while a countdown/recording/save is already in progress
+    if (statusRef.current !== 'idle') return;
     let activeStream = screenStream;
     if (!activeStream) {
       try {
@@ -431,7 +523,7 @@ export default function App() {
         }
 
         activeStream.getVideoTracks()[0].onended = () => {
-          handleStopScreen();
+          handleStopScreenRef.current();
         };
       } catch {
         return; // User cancelled screen selection
@@ -467,6 +559,11 @@ export default function App() {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
+    if (statusRef.current === 'countdown') {
+      // Cancelled before recording began: nothing to save, go back to idle
+      setStatus('idle');
+      return;
+    }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
@@ -474,11 +571,16 @@ export default function App() {
 
   const handleTogglePause = () => {
     if (!mediaRecorderRef.current) return;
-    if (status === 'recording') {
+    if (statusRef.current === 'recording') {
       mediaRecorderRef.current.pause();
+      pauseStartRef.current = Date.now(); // freezes getElapsedMs()
       setStatus('paused');
-    } else if (status === 'paused') {
+    } else if (statusRef.current === 'paused') {
       mediaRecorderRef.current.resume();
+      if (pauseStartRef.current !== null) {
+        pausedAccumMsRef.current += Date.now() - pauseStartRef.current;
+        pauseStartRef.current = null;
+      }
       setStatus('recording');
     }
   };
@@ -511,6 +613,8 @@ export default function App() {
   // Clip library actions
   const handleDeleteClip = async (id: string) => {
     await deleteClipFromDB(id);
+    const removed = clips.find((c) => c.id === id);
+    if (removed?.url) URL.revokeObjectURL(removed.url);
     setClips((prev) => prev.filter((c) => c.id !== id));
     if (selectedClip?.id === id) {
       setSelectedClip(null);
@@ -520,6 +624,7 @@ export default function App() {
   const handleClearAllClips = async () => {
     for (const c of clips) {
       await deleteClipFromDB(c.id);
+      if (c.url) URL.revokeObjectURL(c.url);
     }
     setClips([]);
     setSelectedClip(null);
@@ -534,6 +639,31 @@ export default function App() {
       setSelectedClip((prev) => (prev ? { ...prev, title: newTitle } : null));
     }
   };
+
+  // System tray: keep the tray icon/tooltip in sync, and run its menu actions.
+  // Actions go through a ref that always points at the latest handlers, so the single subscription never goes stale.
+  const trayActionsRef = React.useRef({
+    start: () => {},
+    stop: () => {},
+    togglePause: () => {},
+  });
+  trayActionsRef.current = {
+    start: handleStartRecording,
+    stop: handleStopRecording,
+    togglePause: handleTogglePause,
+  };
+
+  React.useEffect(() => {
+    return window.wongTray?.onCommand((command) => {
+      if (command === 'start') trayActionsRef.current.start();
+      else if (command === 'stop') trayActionsRef.current.stop();
+      else if (command === 'toggle-pause') trayActionsRef.current.togglePause();
+    });
+  }, []);
+
+  React.useEffect(() => {
+    window.wongTray?.sendState(status, elapsedSeconds);
+  }, [status, elapsedSeconds]);
 
   // Keyboard Shortcuts Listener
   React.useEffect(() => {
@@ -576,8 +706,8 @@ export default function App() {
       // F9 start/stop
       if (e.key === 'F9') {
         e.preventDefault();
-        if (status === 'recording' || status === 'paused') {
-          handleStopRecording();
+        if (status === 'recording' || status === 'paused' || status === 'countdown') {
+          handleStopRecording(); // during the countdown this cancels it
         } else {
           handleStartRecording();
         }

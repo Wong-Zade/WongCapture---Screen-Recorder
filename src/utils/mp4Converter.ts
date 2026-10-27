@@ -283,8 +283,22 @@ export async function generateThumbnail(videoBlob: Blob): Promise<string> {
     video.muted = true;
     video.playsInline = true;
 
+    let settled = false;
+    const finish = (value: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(videoUrl);
+      resolve(value);
+    };
+
+    // Never let a stuck decoder block the "processing" state forever
+    const timeoutId = setTimeout(() => finish(''), 5000);
+
     video.onloadeddata = () => {
-      video.currentTime = Math.min(0.5, video.duration / 2);
+      // MediaRecorder WebM files often report duration as Infinity/NaN
+      const d = video.duration;
+      video.currentTime = Number.isFinite(d) && d > 0 ? Math.min(0.5, d / 2) : 0;
     };
 
     video.onseeked = () => {
@@ -294,19 +308,13 @@ export async function generateThumbnail(videoBlob: Blob): Promise<string> {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        URL.revokeObjectURL(videoUrl);
-        resolve(dataUrl);
+        finish(canvas.toDataURL('image/jpeg', 0.85));
       } else {
-        URL.revokeObjectURL(videoUrl);
-        resolve('');
+        finish('');
       }
     };
 
-    video.onerror = () => {
-      URL.revokeObjectURL(videoUrl);
-      resolve('');
-    };
+    video.onerror = () => finish('');
   });
 }
 
