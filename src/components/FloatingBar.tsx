@@ -65,7 +65,7 @@ export const FloatingBar: React.FC<FloatingBarProps> = ({
   const isRecording = status === 'recording' || status === 'paused';
 
   return (
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-2 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700/80 rounded-xl shadow-2xl shadow-black/80 select-none animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-2 bg-neutral-900/95 border border-neutral-700/80 rounded-xl shadow-2xl shadow-black/80 select-none animate-in fade-in zoom-in-95 duration-200">
       <div className="flex items-center text-neutral-500 pr-1 cursor-grab active:cursor-grabbing">
         <GripHorizontal className="w-4 h-4" />
       </div>

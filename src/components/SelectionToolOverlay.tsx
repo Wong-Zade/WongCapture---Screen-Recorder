@@ -268,7 +268,7 @@ export const SelectionToolOverlay: React.FC<SelectionToolOverlayProps> = ({
               onMouseDown={(e) => handleMouseDown(e, 'move')}
               className="absolute inset-0 cursor-move flex items-center justify-center group"
             >
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900/80 backdrop-blur-sm border border-neutral-700 px-2.5 py-1 rounded text-[11px] text-white flex items-center gap-1.5 shadow-lg">
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-neutral-900/80 border border-neutral-700 px-2.5 py-1 rounded text-[11px] text-white flex items-center gap-1.5 shadow-lg">
                 <Move className="w-3.5 h-3.5 text-sky-400" />
                 <span>Drag to Move Region</span>
               </div>
@@ -320,7 +320,7 @@ export const SelectionToolOverlay: React.FC<SelectionToolOverlayProps> = ({
       )}
 
       {/* Floating Selection Tool Bar */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900/90 backdrop-blur-md border border-neutral-700/80 rounded-xl shadow-xl select-none text-xs">
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900/90 border border-neutral-700/80 rounded-xl shadow-xl select-none text-xs">
         <div className="flex items-center gap-1.5 pr-2 border-r border-neutral-700/60">
           <Crop className="w-3.5 h-3.5 text-sky-400" />
           <span className="font-semibold text-neutral-200">Selection Tool</span>

@@ -1,4 +1,5 @@
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+// mp4-muxer is only needed when exporting/trimming, so it is loaded on demand (keeps start-up light)
+const loadMuxer = () => import('mp4-muxer');
 
 export interface SupportedFormats {
   nativeMp4: boolean;
@@ -136,6 +137,7 @@ async function convertWithWebCodecs(
   const fps = 30;
   const totalFrames = Math.max(1, Math.round(duration * fps));
 
+  const { Muxer, ArrayBufferTarget } = await loadMuxer();
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
     video: {
@@ -348,6 +350,7 @@ export async function trimVideo(
   const fps = 30;
   const totalFrames = Math.max(1, Math.round(duration * fps));
 
+  const { Muxer, ArrayBufferTarget } = await loadMuxer();
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
     video: {

@@ -40,7 +40,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const framerates: VideoFrameRate[] = [60, 30, 24];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-150">
       <div className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] text-neutral-100">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
@@ -196,7 +196,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Prevent Infinite Screen Mirror Loop
                   </span>
                   <span className="text-[11px] text-neutral-400 block leading-tight">
-                    Automatically shields preview during full-screen recording to eliminate recursive feedback.
+                    Keeps WongCapture's own window out of your recordings and shields the live preview while recording the full screen. Turn off only if you want the app visible in the video.
                   </span>
                 </div>
                 <input

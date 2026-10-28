@@ -1,4 +1,5 @@
 import React from 'react';
+import { LevelFill } from './LevelMeters';
 import { 
   Monitor, 
   Circle, 
@@ -61,8 +62,6 @@ interface StudioPreviewProps {
   resolution: VideoResolution;
   frameRate: VideoFrameRate;
   format: 'mp4' | 'webm';
-  micLevel: number;
-  systemLevel: number;
   onRequestScreen: () => void;
   onStopScreen: () => void;
   onStartRecording: () => void;
@@ -99,8 +98,6 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
   resolution,
   frameRate,
   format,
-  micLevel,
-  systemLevel,
   onRequestScreen,
   onStopScreen,
   onStartRecording,
@@ -296,20 +293,14 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
                     <Mic className="w-3.5 h-3.5 text-sky-400 shrink-0" />
                     <span className="text-[11px] text-neutral-400 w-7">Mic</span>
                     <div className="flex-1 h-2 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
-                      <div
-                        className="h-full bg-emerald-400 transition-all duration-75"
-                        style={{ width: `${Math.round(micLevel * 100)}%` }}
-                      />
+                      <LevelFill kind="micLevel" className="h-full bg-emerald-400 transition-all duration-75" />
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     <Volume2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                     <span className="text-[11px] text-neutral-400 w-7">Sys</span>
                     <div className="flex-1 h-2 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
-                      <div
-                        className="h-full bg-indigo-400 transition-all duration-75"
-                        style={{ width: `${Math.round(systemLevel * 100)}%` }}
-                      />
+                      <LevelFill kind="systemLevel" className="h-full bg-indigo-400 transition-all duration-75" />
                     </div>
                   </div>
                 </div>
@@ -421,7 +412,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
             <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
               <div className="flex items-center gap-2 pointer-events-auto">
                 {isRecording ? (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-950/85 backdrop-blur-md border border-neutral-700/80 rounded-lg text-xs font-mono font-medium shadow-lg">
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-950/85 border border-neutral-700/80 rounded-lg text-xs font-mono font-medium shadow-lg">
                     <span className={`w-2.5 h-2.5 rounded-full ${status === 'recording' ? 'bg-rose-500 animate-pulse' : 'bg-amber-400'}`} />
                     <span className="text-white text-sm tabular-nums font-semibold tracking-wider">
                       {formatTime(elapsedSeconds)}
@@ -432,7 +423,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
                     </span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 px-3 py-1 bg-neutral-950/80 backdrop-blur-md border border-neutral-800 rounded-lg text-xs text-neutral-300">
+                  <div className="flex items-center gap-2 px-3 py-1 bg-neutral-950/80 border border-neutral-800 rounded-lg text-xs text-neutral-300">
                     <span className="w-2 h-2 rounded-full bg-emerald-500" />
                     <span className="font-semibold text-neutral-200 truncate max-w-[180px]">
                       {sourceName || (isWindowSource ? 'Window' : 'Screen')}
@@ -514,7 +505,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
             {/* Auto-Zoom Click Hint Overlay */}
             {autoZoomConfig.enabled && !isRecording && (
               <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-950/80 border border-sky-800/60 backdrop-blur-md text-[11px] text-sky-200 shadow-lg">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-950/80 border border-sky-800/60 text-[11px] text-sky-200 shadow-lg">
                   <MousePointerClick className="w-3.5 h-3.5 text-sky-400 animate-bounce" />
                   <span>Click anywhere to auto-zoom on click</span>
                 </div>
@@ -523,7 +514,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
 
             {/* Countdown Overlay */}
             {status === 'countdown' && (
-              <div className="absolute inset-0 bg-neutral-950/70 backdrop-blur-sm flex flex-col items-center justify-center z-30 animate-in fade-in">
+              <div className="absolute inset-0 bg-neutral-950/70 flex flex-col items-center justify-center z-30 animate-in fade-in">
                 <div className="w-28 h-28 rounded-full border-4 border-rose-500 flex items-center justify-center text-6xl font-bold font-mono text-white shadow-2xl animate-pulse">
                   {countdownNumber}
                 </div>
@@ -546,7 +537,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
             </p>
 
             <button
-              onClick={onRequestScreen}
+              onClick={() => onRequestScreen()}
               className="w-full max-w-xs py-3 px-5 bg-sky-600 hover:bg-sky-500 active:bg-sky-700 text-white rounded-xl text-sm font-semibold shadow-lg shadow-sky-900/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               <Layers className="w-4 h-4" />
@@ -574,7 +565,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
       </div>
 
       {/* Feature Toolbar (Auto-Zoom on Clicks + Selection Tool + Action Bar) */}
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-3 px-4 py-2 bg-neutral-900/90 backdrop-blur-xl border border-neutral-800 rounded-2xl shadow-xl z-20">
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-3 px-4 py-2 bg-neutral-900/90 border border-neutral-800 rounded-2xl shadow-xl z-20">
         {/* Main Record/Stop Action */}
         {!isRecording ? (
           <button
@@ -669,10 +660,7 @@ export const StudioPreview: React.FC<StudioPreviewProps> = ({
           </button>
           {audioConfig.microphone && (
             <div className="w-10 h-2 bg-neutral-800 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-emerald-400 transition-all duration-75"
-                style={{ width: `${Math.round(micLevel * 100)}%` }}
-              />
+              <LevelFill kind="micLevel" className="h-full bg-emerald-400 transition-all duration-75" />
             </div>
           )}
         </div>

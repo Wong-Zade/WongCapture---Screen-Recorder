@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('wongWindow', {
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
   setAlwaysOnTop: (pinned) => ipcRenderer.send('window:pin', pinned),
+  setContentProtection: (enabled) => ipcRenderer.send('window:setContentProtection', enabled),
   onMaximizedChange: (callback) => {
     const handler = (_event, isMax) => callback(isMax);
     ipcRenderer.on('window:isMaximized', handler);
@@ -29,7 +30,7 @@ contextBridge.exposeInMainWorld('wongWindow', {
 
 contextBridge.exposeInMainWorld('wongCapture', {
   getSources: () => ipcRenderer.invoke('desktop:getSources'),
-  setPreferredSource: (sourceId) => ipcRenderer.invoke('desktop:setPreferredSource', sourceId),
+  setPreferredSource: (sourceId, displayId) => ipcRenderer.invoke('desktop:setPreferredSource', sourceId, displayId),
   onAutoZoomTrigger: (callback) => {
     const handler = (_event, coords) => callback(coords);
     ipcRenderer.on('autozoom:trigger', handler);

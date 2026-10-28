@@ -12,6 +12,7 @@ declare global {
       maximize: () => void;
       close: () => void;
       setAlwaysOnTop: (pinned: boolean) => void;
+      setContentProtection?: (enabled: boolean) => void;
       onMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
     };
     wongCapture?: {
@@ -23,8 +24,8 @@ declare global {
         isScreen: boolean;
         display_id?: string;
       }>>;
-      setPreferredSource: (sourceId: string) => Promise<boolean>;
-      onAutoZoomTrigger?: (callback: (coords: { normX: number; normY: number }) => void) => () => void;
+      setPreferredSource: (sourceId: string | null, displayId?: string) => Promise<boolean>;
+      onAutoZoomTrigger?: (callback: (coords: { normX: number; normY: number; approximate?: boolean }) => void) => () => void;
     };
   }
 }

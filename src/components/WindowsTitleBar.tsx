@@ -56,7 +56,7 @@ export const WindowsTitleBar: React.FC<WindowsTitleBarProps> = ({
     <header 
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       onDoubleClick={handleDoubleClickHeader}
-      className="h-10 bg-neutral-900/90 backdrop-blur-md border-b border-neutral-800/80 flex items-center justify-between px-3 select-none text-xs text-neutral-300 shrink-0 z-50 cursor-default"
+      className="h-10 bg-neutral-900/90 border-b border-neutral-800/80 flex items-center justify-between px-3 select-none text-xs text-neutral-300 shrink-0 z-50 cursor-default"
     >
       {/* Zone 1: App Brand & Window Name */}
       <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">

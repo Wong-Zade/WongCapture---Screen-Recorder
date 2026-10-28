@@ -9,6 +9,9 @@ let quitTimer = null;
 let trayTooltip = '';
 let recState = { status: 'idle', elapsedSeconds: 0 };
 let shownHiddenHint = false;
+let preferredSource = null;       // { id, isScreen, displayId } chosen in the in-app picker (null = primary screen)
+let knownSourceIds = new Set();   // ids from the last picker list: only real sources can be selected
+let zoomShortcutsActive = false;
 
 const VALID_STATUSES = new Set(['idle', 'countdown', 'recording', 'paused', 'processing']);
 const isActive = () => ['countdown', 'recording', 'paused', 'processing'].includes(recState.status);
@@ -28,6 +31,7 @@ function createWindow() {
     minHeight: 360,
     title: 'WongCapture - Screen Recorder',
     backgroundColor: '#0a0a0a',
+    show: false, // shown on 'ready-to-show' so the window never flashes an empty frame
     frame: false,
     webPreferences: {
       nodeIntegration: false,
@@ -49,7 +53,19 @@ function createWindow() {
   }
 
   mainWindow = win;
-  
+
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show();
+  });
+  // Safety net: never leave the app invisible if 'ready-to-show' does not arrive
+  setTimeout(() => {
+    if (!win.isDestroyed() && !win.isVisible() && !isQuitting) win.show();
+  }, 4000);
+
+  // Keep WongCapture's own window OUT of recordings (the "infinite mirror"). On Windows 10 (2004+) / 11 the window
+  // is left out of the capture; older Windows shows it as a black box. The renderer can switch this off in Settings.
+  win.setContentProtection(true);
+
   win.on('maximize', () => {
     if (!win.isDestroyed()) win.webContents.send('window:isMaximized', true);
   });
@@ -209,6 +225,7 @@ ipcMain.on('tray:state', (event, payload) => {
 
   recState = { status: payload.status, elapsedSeconds: elapsed };
   refreshTray();
+  syncZoomShortcuts();
 
   if (quitWhenIdle && recState.status === 'idle') {
     isQuitting = true;
@@ -216,57 +233,80 @@ ipcMain.on('tray:state', (event, payload) => {
   }
 });
 
-ipcMain.on('window:minimize', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+// Only our own window may talk to these handlers
+const isMainSender = (event) => !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+
+ipcMain.on('window:minimize', (event) => {
+  if (isMainSender(event)) mainWindow.minimize();
 });
 
-ipcMain.on('window:maximize', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    else mainWindow.maximize();
-  }
+ipcMain.on('window:maximize', (event) => {
+  if (!isMainSender(event)) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
 });
 
-ipcMain.on('window:close', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+ipcMain.on('window:close', (event) => {
+  if (isMainSender(event)) mainWindow.close();
 });
 
-ipcMain.on('window:pin', (_event, pinned) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setAlwaysOnTop(!!pinned, 'screen-saver');
-  }
+ipcMain.on('window:pin', (event, pinned) => {
+  if (isMainSender(event)) mainWindow.setAlwaysOnTop(pinned === true, 'screen-saver');
 });
 
-let preferredSourceId = null;
+// Settings -> "Prevent infinite mirror": hide/show WongCapture's own window in recordings
+ipcMain.on('window:setContentProtection', (event, enabled) => {
+  if (isMainSender(event)) mainWindow.setContentProtection(enabled !== false);
+});
 
-// Expose open windows & screens to renderer for the source selector modal
-ipcMain.handle('desktop:getSources', async () => {
+// Windows & screens for the source picker. Small JPEG thumbnails keep the IPC payload light,
+// and WongCapture's own window / unnamed system windows are never offered.
+ipcMain.handle('desktop:getSources', async (event) => {
+  if (!isMainSender(event)) return [];
   try {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
-      thumbnailSize: { width: 360, height: 202 },
+      thumbnailSize: { width: 320, height: 180 },
       fetchWindowIcons: true,
     });
-    return sources.map((s) => ({
-      id: s.id,
-      name: s.name,
-      thumbnail: s.thumbnail.toDataURL(),
-      appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
-      isScreen: s.id.startsWith('screen:'),
-      display_id: s.display_id,
-    }));
+    const ownId = mainWindow.getMediaSourceId();
+    const list = sources
+      .filter((s) => s.id !== ownId && s.name && s.name.trim() !== '')
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        thumbnail:
+          s.thumbnail && !s.thumbnail.isEmpty()
+            ? `data:image/jpeg;base64,${s.thumbnail.toJPEG(70).toString('base64')}`
+            : '',
+        appIcon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null,
+        isScreen: s.id.startsWith('screen:'),
+        display_id: s.display_id,
+      }));
+    knownSourceIds = new Set(list.map((s) => s.id));
+    return list;
   } catch (err) {
     console.error('Failed to get desktop sources:', err);
     return [];
   }
 });
 
-ipcMain.handle('desktop:setPreferredSource', (_event, sourceId) => {
-  preferredSourceId = sourceId;
+ipcMain.handle('desktop:setPreferredSource', (event, sourceId, displayId) => {
+  if (!isMainSender(event)) return false;
+  if (sourceId === null) {
+    preferredSource = null;
+    return true;
+  }
+  if (typeof sourceId !== 'string' || !knownSourceIds.has(sourceId)) return false;
+  preferredSource = {
+    id: sourceId,
+    isScreen: sourceId.startsWith('screen:'),
+    displayId: typeof displayId === 'string' && displayId ? displayId : null,
+  };
   return true;
 });
 
-// Electron's getDisplayMedia() handler - respects preferred source selected by user
+// Electron's getDisplayMedia() handler - respects the source picked in the app
 function registerDisplayMediaHandler() {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
@@ -276,11 +316,12 @@ function registerDisplayMediaHandler() {
       });
 
       let chosen = null;
-      if (preferredSourceId) {
-        chosen = sources.find((s) => s.id === preferredSourceId);
+      if (preferredSource && preferredSource.id !== mainWindow?.getMediaSourceId()) {
+        chosen = sources.find((s) => s.id === preferredSource.id);
       }
 
       if (!chosen) {
+        // Nothing picked (or that window has closed): primary monitor, then first available
         const screens = sources.filter((s) => s.id.startsWith('screen:'));
         const primaryId = String(screen.getPrimaryDisplay().id);
         chosen = screens.find((s) => s.display_id === primaryId) || screens[0] || sources[0];
@@ -303,6 +344,61 @@ function registerDisplayMediaHandler() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Tutorial zoom: F10 / Alt+Z, registered system-wide ONLY while recording
+// ---------------------------------------------------------------------------
+// Which display the recording is of (null = we cannot tell, e.g. a single window)
+function capturedDisplay() {
+  const displays = screen.getAllDisplays();
+  if (preferredSource && !preferredSource.isScreen) return null;
+  if (preferredSource && preferredSource.displayId) {
+    const match = displays.find((d) => String(d.id) === preferredSource.displayId);
+    if (match) return match;
+  }
+  return screen.getPrimaryDisplay();
+}
+
+function triggerZoomAtCursor() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    const display = capturedDisplay();
+    if (!display) {
+      // Recording a single window: Windows gives us no way to read its position, so zoom to its centre
+      mainWindow.webContents.send('autozoom:trigger', { normX: 0.5, normY: 0.5, approximate: true });
+      return;
+    }
+    const point = screen.getCursorScreenPoint();
+    const b = display.bounds;
+    const normX = (point.x - b.x) / b.width;
+    const normY = (point.y - b.y) / b.height;
+    // Cursor is on a different monitor than the one being recorded: nothing to zoom into
+    if (normX < 0 || normX > 1 || normY < 0 || normY > 1) return;
+    mainWindow.webContents.send('autozoom:trigger', { normX, normY, approximate: false });
+  } catch (err) {
+    console.warn('Failed to calculate cursor zoom point:', err);
+  }
+}
+
+function syncZoomShortcuts() {
+  const wanted = recState.status === 'recording' || recState.status === 'paused';
+  if (wanted === zoomShortcutsActive) return;
+  zoomShortcutsActive = wanted;
+  try {
+    if (wanted) {
+      for (const accel of ['F10', 'Alt+Z']) {
+        if (!globalShortcut.register(accel, triggerZoomAtCursor)) {
+          console.warn(`Global shortcut ${accel} is already used by another app`);
+        }
+      }
+    } else {
+      globalShortcut.unregister('F10');
+      globalShortcut.unregister('Alt+Z');
+    }
+  } catch (err) {
+    console.warn('Could not update global zoom shortcuts:', err);
+  }
+}
+
 // One instance only, otherwise you would end up with several tray icons and competing recorders
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -314,28 +410,6 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();
 
-    // Global tutorial zoom trigger: when F10 or Alt+Z is pressed anywhere in Windows,
-    // zoom smoothly into where the presenter's mouse cursor is pointing!
-    const triggerZoomAtCursor = () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      try {
-        const point = screen.getCursorScreenPoint();
-        const primary = screen.getPrimaryDisplay();
-        const normX = Math.max(0, Math.min(1, (point.x - primary.bounds.x) / (primary.bounds.width || 1920)));
-        const normY = Math.max(0, Math.min(1, (point.y - primary.bounds.y) / (primary.bounds.height || 1080)));
-        mainWindow.webContents.send('autozoom:trigger', { normX, normY });
-      } catch (err) {
-        console.warn('Failed to calculate cursor zoom point:', err);
-      }
-    };
-
-    try {
-      globalShortcut.register('F10', triggerZoomAtCursor);
-      globalShortcut.register('Alt+Z', triggerZoomAtCursor);
-    } catch (err) {
-      console.warn('Could not register global zoom shortcuts:', err);
-    }
-
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -343,6 +417,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     isQuitting = true;
+  });
+
+  app.on('will-quit', () => {
     try {
       globalShortcut.unregisterAll();
     } catch (_) {}
@@ -359,4 +436,7 @@ module.exports.__test = {
   getTooltip: () => trayTooltip,
   getState: () => recState,
   getWindow: () => mainWindow,
+  getPreferredSource: () => preferredSource,
+  zoomShortcutsActive: () => zoomShortcutsActive,
+  triggerZoomAtCursor,
 };

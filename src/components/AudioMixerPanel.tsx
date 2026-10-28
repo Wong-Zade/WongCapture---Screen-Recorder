@@ -1,4 +1,5 @@
 import React from 'react';
+import { LevelFill, LevelPercent } from './LevelMeters';
 import { X, Mic, Volume2, Sparkles, Check, SlidersHorizontal } from 'lucide-react';
 import { AudioConfig } from '../types';
 
@@ -7,8 +8,6 @@ interface AudioMixerPanelProps {
   onClose: () => void;
   audioConfig: AudioConfig;
   onUpdateConfig: (config: Partial<AudioConfig>) => void;
-  micLevel: number; // 0 to 1
-  systemLevel: number; // 0 to 1
 }
 
 export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
@@ -16,8 +15,6 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
   onClose,
   audioConfig,
   onUpdateConfig,
-  micLevel,
-  systemLevel,
 }) => {
   const [audioDevices, setAudioDevices] = React.useState<MediaDeviceInfo[]>([]);
 
@@ -32,7 +29,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-150">
       <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden text-neutral-100">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
@@ -112,16 +109,10 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
             <div>
               <div className="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
                 <span>Signal Level</span>
-                <span className="font-mono">{Math.round(micLevel * 100)}%</span>
+                <LevelPercent kind="micLevel" className="font-mono" />
               </div>
               <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden flex p-0.5 border border-neutral-800">
-                <div
-                  className="h-full rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round(micLevel * 100)}%`,
-                    backgroundColor: micLevel > 0.85 ? '#ef4444' : micLevel > 0.6 ? '#f59e0b' : '#10b981',
-                  }}
-                />
+                <LevelFill kind="micLevel" colorize className="h-full rounded-full transition-all duration-75" />
               </div>
             </div>
 
@@ -191,16 +182,10 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
             <div>
               <div className="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
                 <span>Signal Level</span>
-                <span className="font-mono">{Math.round(systemLevel * 100)}%</span>
+                <LevelPercent kind="systemLevel" className="font-mono" />
               </div>
               <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden flex p-0.5 border border-neutral-800">
-                <div
-                  className="h-full rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round(systemLevel * 100)}%`,
-                    backgroundColor: systemLevel > 0.85 ? '#ef4444' : systemLevel > 0.6 ? '#f59e0b' : '#10b981',
-                  }}
-                />
+                <LevelFill kind="systemLevel" colorize className="h-full rounded-full transition-all duration-75" />
               </div>
             </div>
           </div>
