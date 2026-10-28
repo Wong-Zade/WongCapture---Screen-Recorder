@@ -16,6 +16,7 @@ import {
   Move
 } from 'lucide-react';
 import { DesktopCaptureSource, CropRegion, SelectionPreset } from '../types';
+import { presetRegion } from '../utils/cropPresets';
 
 interface SourcePickerModalProps {
   isOpen: boolean;
@@ -27,6 +28,11 @@ interface SourcePickerModalProps {
   onStartAreaSelection: () => void;
   hasActiveScreen: boolean;
   initialTab?: 'windows' | 'screens' | 'area';
+  /** Area framing was requested before any source was connected: pick one first. */
+  awaitingAreaFraming?: boolean;
+  /** Size of the connected source (used to give area presets their true shape). */
+  sourceWidth?: number;
+  sourceHeight?: number;
 }
 
 export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
@@ -39,6 +45,9 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
   onStartAreaSelection,
   hasActiveScreen,
   initialTab,
+  awaitingAreaFraming = false,
+  sourceWidth = 1920,
+  sourceHeight = 1080,
 }) => {
   const [activeTab, setActiveTab] = React.useState<'windows' | 'screens' | 'area'>(initialTab || 'windows');
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -84,59 +93,15 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
   if (!isOpen) return null;
 
   const screens = sources.filter((s) => s.isScreen);
-  const windows = sources.filter((s) => !s.isScreen && (!s.name.includes('WongCapture') || s.name.length > 25));
+  // (WongCapture's own window is already left out by the desktop app itself)
+  const windows = sources.filter((s) => !s.isScreen);
 
   const filteredItems = (activeTab === 'windows' ? windows : screens).filter((item) =>
     item.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleApplyPreset = (preset: SelectionPreset) => {
-    if (preset === 'full') {
-      onChangeCropRegion({
-        enabled: false,
-        preset: 'full',
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-      });
-      return;
-    }
-
-    let normW = 0.8;
-    let normH = 0.8;
-
-    if (preset === '16:9') {
-      normW = 0.85;
-      normH = (0.85 * 9) / 16;
-    } else if (preset === '4:3') {
-      normW = 0.75;
-      normH = (0.75 * 3) / 4;
-    } else if (preset === '1:1') {
-      normH = 0.75;
-      normW = (0.75 * 9) / 16;
-    } else if (preset === '9:16') {
-      normH = 0.88;
-      normW = (0.88 * 9) / 16 * (9 / 16);
-    } else {
-      normW = 0.8;
-      normH = 0.7;
-    }
-
-    normW = Math.max(0.2, Math.min(0.95, normW));
-    normH = Math.max(0.2, Math.min(0.95, normH));
-
-    const normX = Math.max(0, (1 - normW) / 2);
-    const normY = Math.max(0, (1 - normH) / 2);
-
-    onChangeCropRegion({
-      enabled: true,
-      preset,
-      x: normX,
-      y: normY,
-      width: normW,
-      height: normH,
-    });
+    onChangeCropRegion(presetRegion(preset, sourceWidth, sourceHeight));
   };
 
   const handleStartFraming = () => {
@@ -144,11 +109,14 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
       handleApplyPreset('16:9');
     }
     onStartAreaSelection();
-    onClose();
+    // With nothing connected yet, the app asks for a source first: stay open (it switches to the Screens tab)
+    if (hasActiveScreen) {
+      onClose();
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 animate-in fade-in duration-150">
       <div className="w-full max-w-3xl bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] text-neutral-100">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 shrink-0">
@@ -244,6 +212,13 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
           )}
         </div>
 
+        {awaitingAreaFraming && activeTab !== 'area' && (
+          <div className="mx-6 mt-4 px-3 py-2 rounded-lg bg-sky-950/50 border border-sky-500/30 text-[11px] text-sky-200 flex items-center gap-2 shrink-0">
+            <Crop className="w-3.5 h-3.5 shrink-0" />
+            <span>Pick a screen or window first, then you'll drag out the area to record.</span>
+          </div>
+        )}
+
         {/* Tab 1 & 2: Electron Windows & Screens */}
         {activeTab !== 'area' && hasElectronCapture && (
           <div className="p-6 overflow-y-auto flex-1">
@@ -282,7 +257,7 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
                         </div>
                       )}
 
-                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-neutral-950/80 backdrop-blur-md border border-neutral-700 text-[10px] text-neutral-300 font-mono">
+                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-neutral-950/80 border border-neutral-700 text-[10px] text-neutral-300 font-mono">
                         {item.isScreen ? 'Screen' : 'Window'}
                       </div>
                     </div>

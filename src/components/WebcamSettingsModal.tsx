@@ -56,7 +56,7 @@ export const WebcamSettingsModal: React.FC<WebcamSettingsModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-150">
       <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden text-neutral-100">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
@@ -93,7 +93,7 @@ export const WebcamSettingsModal: React.FC<WebcamSettingsModalProps> = ({
 
             {/* Mirror badge */}
             {config.enabled && (
-              <div className="absolute top-2 right-2 px-2 py-1 bg-neutral-950/80 backdrop-blur-sm rounded text-[10px] text-neutral-300">
+              <div className="absolute top-2 right-2 px-2 py-1 bg-neutral-950/80 rounded text-[10px] text-neutral-300">
                 {config.shape.toUpperCase()} · {config.size.toUpperCase()}
               </div>
             )}

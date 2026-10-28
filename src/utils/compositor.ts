@@ -15,6 +15,8 @@ export class VideoCompositor {
   private webcamVideo: HTMLVideoElement | null = null;
   private outputStream: MediaStream | null = null;
   private isRunning: boolean = false;
+  private targetFps: number = 30;
+  private lastDrawTime: number = 0;
 
   private webcamConfig: WebcamConfig | null = null;
   private cropRegion: CropRegion | null = null;
@@ -55,6 +57,8 @@ export class VideoCompositor {
     this.webcamConfig = webcamConfig;
     this.cropRegion = cropRegion;
     this.autoZoomConfig = autoZoomConfig;
+    this.targetFps = Math.max(5, Math.min(60, fps || 30));
+    this.lastDrawTime = 0;
 
     // Reset camera state
     this.currentZoom = 1.0;
@@ -144,9 +148,9 @@ export class VideoCompositor {
   /**
    * Triggers a click at normalized coordinates (0..1) relative to the visible preview
    */
-  triggerClickZoom(normalizedX: number, normalizedY: number) {
-    // Add visual click ripple & tutorial spotlight
-    if (this.autoZoomConfig?.showClickRipple !== false) {
+  triggerClickZoom(normalizedX: number, normalizedY: number, options?: { ripple?: boolean }) {
+    // Add visual click ripple & tutorial spotlight (skipped when the position is only approximate)
+    if (options?.ripple !== false && this.autoZoomConfig?.showClickRipple !== false) {
       this.ripples.push({
         x: normalizedX,
         y: normalizedY,
@@ -169,7 +173,8 @@ export class VideoCompositor {
     }
 
     // Auto glide back out after configured duration (if duration > 0)
-    const duration = this.autoZoomConfig.durationSeconds || 2.5;
+    // 0 means "stay zoomed until reset" (see AutoZoomConfig.durationSeconds); only a missing value falls back to 2.5s
+    const duration = this.autoZoomConfig.durationSeconds ?? 2.5;
     if (duration > 0) {
       this.zoomTimeoutId = window.setTimeout(() => {
         this.resetZoom();
@@ -206,6 +211,16 @@ export class VideoCompositor {
   private renderLoop = () => {
     if (!this.isRunning || !this.ctx || !this.screenVideo) return;
 
+    // Draw at the recording frame rate, not at the monitor's refresh rate (a 144 Hz display would otherwise
+    // redraw a full-resolution frame 144 times a second for a 30 fps recording).
+    const now = performance.now();
+    if (this.lastDrawTime && now - this.lastDrawTime < 1000 / this.targetFps - 2) {
+      this.animFrameId = requestAnimationFrame(this.renderLoop);
+      return;
+    }
+    const dt = this.lastDrawTime ? Math.min(now - this.lastDrawTime, 100) : 16.7;
+    this.lastDrawTime = now;
+
     const outW = this.canvas.width;
     const outH = this.canvas.height;
 
@@ -226,9 +241,11 @@ export class VideoCompositor {
     }
 
     // 2. Smoothly interpolate virtual camera zoom and pan (lerp)
-    this.currentZoom += (this.targetZoom - this.currentZoom) * 0.14;
-    this.currentPanX += (this.targetPanX - this.currentPanX) * 0.14;
-    this.currentPanY += (this.targetPanY - this.currentPanY) * 0.14;
+    // (time-based, so the glide looks the same whatever frame rate we draw at)
+    const k = 1 - Math.pow(1 - 0.14, dt / 16.667);
+    this.currentZoom += (this.targetZoom - this.currentZoom) * k;
+    this.currentPanX += (this.targetPanX - this.currentPanX) * k;
+    this.currentPanY += (this.targetPanY - this.currentPanY) * k;
 
     // 3. Compute zoomed sub-rectangle within base crop
     const visibleW = baseCropW / this.currentZoom;

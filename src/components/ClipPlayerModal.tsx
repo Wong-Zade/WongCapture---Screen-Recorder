@@ -235,7 +235,7 @@ export const ClipPlayerModal: React.FC<ClipPlayerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 animate-in fade-in duration-200">
       <div className="w-full max-w-4xl bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-800 bg-neutral-950/40">
@@ -301,7 +301,7 @@ export const ClipPlayerModal: React.FC<ClipPlayerModalProps> = ({
           {!isPlaying && (
             <button
               onClick={togglePlay}
-              className="absolute w-14 h-14 rounded-full bg-neutral-900/80 backdrop-blur-md border border-neutral-700/80 text-white flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
+              className="absolute w-14 h-14 rounded-full bg-neutral-900/80 border border-neutral-700/80 text-white flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
             >
               <Play className="w-6 h-6 fill-current translate-x-0.5" />
             </button>

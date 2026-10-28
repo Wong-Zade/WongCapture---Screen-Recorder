@@ -15,17 +15,10 @@ import {
   DesktopCaptureSource
 } from './types';
 import { WindowsTitleBar } from './components/WindowsTitleBar';
-import { FloatingBar } from './components/FloatingBar';
 import { MiniBar } from './components/MiniBar';
-import { StudioPreview } from './components/StudioPreview';
-import { SelectionToolOverlay } from './components/SelectionToolOverlay';
-import { AudioMixerPanel } from './components/AudioMixerPanel';
-import { WebcamSettingsModal } from './components/WebcamSettingsModal';
-import { ClipPlayerModal } from './components/ClipPlayerModal';
-import { ClipLibrary } from './components/ClipLibrary';
-import { SettingsModal } from './components/SettingsModal';
-import { SourcePickerModal } from './components/SourcePickerModal';
-import { AudioMixer, AudioLevels } from './utils/audioMixer';
+import { AudioMixer } from './utils/audioMixer';
+import { publishAudioLevels } from './utils/audioLevelStore';
+import { MicPulseDot } from './components/LevelMeters';
 import { VideoCompositor } from './utils/compositor';
 import { createRecorder, generateThumbnail, getSupportedFormats } from './utils/mp4Converter';
 import { 
@@ -36,9 +29,24 @@ import {
   requestPersistentStorage
 } from './utils/storage';
 
+// Loaded on demand: the first screen only needs the title bar and the mini bar, everything below is fetched
+// the first time it is opened. This keeps start-up fast and memory low.
+function lazyNamed<K extends string, C extends React.ComponentType<any>>(load: () => Promise<Record<K, C>>, name: K) {
+  return React.lazy(() => load().then((m) => ({ default: m[name] })));
+}
+
+const StudioPreview = lazyNamed(() => import('./components/StudioPreview'), 'StudioPreview');
+const SelectionToolOverlay = lazyNamed(() => import('./components/SelectionToolOverlay'), 'SelectionToolOverlay');
+const AudioMixerPanel = lazyNamed(() => import('./components/AudioMixerPanel'), 'AudioMixerPanel');
+const WebcamSettingsModal = lazyNamed(() => import('./components/WebcamSettingsModal'), 'WebcamSettingsModal');
+const ClipPlayerModal = lazyNamed(() => import('./components/ClipPlayerModal'), 'ClipPlayerModal');
+const ClipLibrary = lazyNamed(() => import('./components/ClipLibrary'), 'ClipLibrary');
+const SettingsModal = lazyNamed(() => import('./components/SettingsModal'), 'SettingsModal');
+const SourcePickerModal = lazyNamed(() => import('./components/SourcePickerModal'), 'SourcePickerModal');
+
 const DEFAULT_SETTINGS: RecordingSettings = {
   resolution: '1080p',
-  frameRate: 60,
+  frameRate: 30, // 60 fps doubles the encoding work; it is one click away in Settings
   format: 'mp4',
   countdown: 3,
   bitrateKbps: 8000,
@@ -142,6 +150,15 @@ export default function App() {
       return true;
     }
   });
+  // User-initiated switches are remembered; the automatic switch when recording starts is not
+  const changeCompactMode = (next: boolean) => {
+    setIsCompact(next);
+    try {
+      localStorage.setItem('wongcapture_compact_mode', JSON.stringify(next));
+    } catch {
+      /* storage unavailable: just don't remember */
+    }
+  };
   const [sourcePickerTab, setSourcePickerTab] = React.useState<'windows' | 'screens' | 'area'>('screens');
   const [isPinned, setIsPinned] = React.useState(false);
   const [isMixerOpen, setIsMixerOpen] = React.useState(false);
@@ -149,6 +166,14 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = React.useState(false);
   const [isSourcePickerOpen, setIsSourcePickerOpen] = React.useState(false);
+  const [sourceSize, setSourceSize] = React.useState({ width: 1920, height: 1080 });
+  // "Frame an area" was chosen before any screen was connected: pick a source first, then start framing
+  const [awaitingAreaFraming, setAwaitingAreaFraming] = React.useState(false);
+  const awaitingAreaRef = React.useRef(false);
+  const setAwaitingArea = (value: boolean) => {
+    awaitingAreaRef.current = value;
+    setAwaitingAreaFraming(value);
+  };
   const [selectedClip, setSelectedClip] = React.useState<RecordedClip | null>(null);
 
   // Streams & Engine
@@ -162,7 +187,6 @@ export default function App() {
   const [status, setStatus] = React.useState<RecordingStatus>('idle');
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const [countdownNumber, setCountdownNumber] = React.useState(3);
-  const [audioLevels, setAudioLevels] = React.useState<AudioLevels>({ micLevel: 0, systemLevel: 0 });
 
   // Clip Storage
   const [clips, setClips] = React.useState<RecordedClip[]>([]);
@@ -173,7 +197,6 @@ export default function App() {
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const recordedChunksRef = React.useRef<Blob[]>([]);
   const timerIntervalRef = React.useRef<number | null>(null);
-  const vuMeterIntervalRef = React.useRef<number | null>(null);
   const countdownIntervalRef = React.useRef<number | null>(null);
 
   // Refs mirror live state so long-lived callbacks (onended, recorder.onstop, timers) never read stale values
@@ -183,6 +206,10 @@ export default function App() {
   const pausedAccumMsRef = React.useRef(0);
   const pauseStartRef = React.useRef<number | null>(null);
   const handleStopScreenRef = React.useRef<() => void>(() => {});
+  const cropRegionRef = React.useRef<CropRegion>(cropRegion);
+  cropRegionRef.current = cropRegion;
+  const isCompactRef = React.useRef(isCompact);
+  isCompactRef.current = isCompact;
   statusRef.current = status;
   screenStreamRef.current = screenStream;
 
@@ -223,30 +250,48 @@ export default function App() {
     getAllClipsFromDB().then(setClips).catch(console.warn);
   }, []);
 
+  // Capture at a trickle while nothing is recording and no live preview is showing (compact mode has none)
+  React.useEffect(() => {
+    if (!screenStream) return;
+    const previewVisible = !isCompact;
+    const fps = status === 'idle' ? (previewVisible ? Math.min(30, settings.frameRate) : 5) : settings.frameRate;
+    applyCaptureFps(screenStream, fps);
+  }, [screenStream, status, isCompact, settings.frameRate]);
+
+  // "Hide WongCapture from recordings" follows the Settings toggle (on by default)
+  React.useEffect(() => {
+    window.wongWindow?.setContentProtection?.(settings.preventMirrorLoop !== false);
+  }, [settings.preventMirrorLoop]);
+
   // Release everything on unmount (camera/mic/screen indicators, timers, compositor loop)
   React.useEffect(() => {
     return () => {
       screenStreamRef.current?.getTracks().forEach((t) => t.stop());
       compositorRef.current.stop();
-      [timerIntervalRef, vuMeterIntervalRef, countdownIntervalRef].forEach((r) => {
+      [timerIntervalRef, countdownIntervalRef].forEach((r) => {
         if (r.current !== null) clearInterval(r.current);
       });
     };
   }, []);
 
-  // VU Meter & Zoom State Loop
+  // Audio meters. Levels go to a tiny external store (see audioLevelStore) instead of React state, and the
+  // timer only runs while there is actually an audio source to measure.
+  const hasAudioSource = micStream !== null || (screenStream?.getAudioTracks().length ?? 0) > 0;
   React.useEffect(() => {
-    vuMeterIntervalRef.current = window.setInterval(() => {
-      setAudioLevels(audioMixerRef.current.getLevels());
-      setIsZoomed(compositorRef.current.getZoomState().isZoomed);
-    }, 100);
+    if (!hasAudioSource) {
+      publishAudioLevels({ micLevel: 0, systemLevel: 0 });
+      return;
+    }
+    const id = window.setInterval(() => publishAudioLevels(audioMixerRef.current.getLevels()), 100);
+    return () => clearInterval(id);
+  }, [hasAudioSource]);
 
-    return () => {
-      if (vuMeterIntervalRef.current !== null) {
-        clearInterval(vuMeterIntervalRef.current);
-      }
-    };
-  }, []);
+  // The zoom indicator only matters while recording (the compositor only runs then)
+  React.useEffect(() => {
+    if (status !== 'recording' && status !== 'paused') return;
+    const id = window.setInterval(() => setIsZoomed(compositorRef.current.getZoomState().isZoomed), 250);
+    return () => clearInterval(id);
+  }, [status]);
 
   // Webcam stream management (cleanup stops the camera when the device changes, it is disabled, or on unmount)
   React.useEffect(() => {
@@ -344,15 +389,30 @@ export default function App() {
     audioMixerRef.current.setSystemVolume(audioConfig.systemVolume);
   }, [audioConfig.systemVolume]);
 
+  // Lowers/raises how often the screen is captured. Capturing is the single most expensive thing the app does,
+  // so it only runs at full rate while recording (or while a live preview is on screen).
+  const applyCaptureFps = async (stream: MediaStream | null, fps: number) => {
+    const track = stream?.getVideoTracks()[0];
+    if (!track || track.readyState !== 'live') return;
+    try {
+      await track.applyConstraints({ frameRate: { ideal: fps, max: fps } });
+    } catch {
+      /* some sources cannot change their frame rate: keep whatever they give us */
+    }
+  };
+
   // Screen / Window selection
-  const handleRequestScreen = async (tab: 'windows' | 'screens' | 'area' = 'screens') => {
-    setSourcePickerTab(tab);
-    // If running in Electron desktop environment, open our dedicated SourcePickerModal
+  const handleRequestScreen = async (tab?: 'windows' | 'screens' | 'area') => {
+    // Never swap the source underneath a countdown / recording / save
+    if (statusRef.current !== 'idle') return;
+    // (a click handler can pass its event in here: only accept a real tab name)
+    setSourcePickerTab(tab === 'windows' || tab === 'area' ? tab : 'screens');
+    // In the desktop app, open our own picker (screens + windows with thumbnails)
     if (typeof window !== 'undefined' && window.wongCapture?.getSources) {
       setIsSourcePickerOpen(true);
       return;
     }
-    // Otherwise open native browser picker
+    // Otherwise the browser shows its native picker
     await acquireScreenStream();
   };
 
@@ -366,19 +426,19 @@ export default function App() {
     await handleRequestScreen('windows');
   };
 
-  const handleSelectArea = async () => {
-    if (!screenStream) {
-      if (typeof window !== 'undefined' && window.wongCapture?.getSources) {
-        await handleRequestScreen('area');
-        return;
-      } else {
-        await acquireScreenStream();
-      }
+  // Start framing a recording area. That needs a connected source to frame against, so if there is none yet
+  // ask for one first; framing starts as soon as the source is connected.
+  const beginAreaSelection = async () => {
+    if (screenStreamRef.current) {
+      setIsSelectingArea(true);
+      return;
     }
-    setIsSelectingArea(true);
+    setAwaitingArea(true);
+    await handleRequestScreen('screens');
   };
+  const handleSelectArea = beginAreaSelection;
 
-  const acquireScreenStream = async () => {
+  const acquireScreenStream = async (hint?: { name: string; isWindow: boolean }): Promise<MediaStream | null> => {
     try {
       const widthVal = settings.resolution === '4k' ? 3840 : settings.resolution === '1080p' ? 1920 : settings.resolution === '720p' ? 1280 : undefined;
       const heightVal = settings.resolution === '4k' ? 2160 : settings.resolution === '1080p' ? 1080 : settings.resolution === '720p' ? 720 : undefined;
@@ -393,15 +453,28 @@ export default function App() {
       };
 
       const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+
+      // Replacing a connected source: release the old capture instead of leaving it running in the background
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
       setScreenStream(stream);
 
-      // Determine if selected source is a window or screen from the track label
       const track = stream.getVideoTracks()[0];
       if (track) {
         const label = track.label || '';
-        const isWindow = label.toLowerCase().includes('window') || (!label.toLowerCase().includes('screen') && label.length > 0);
-        setSelectedSourceName(label || (isWindow ? 'Application Window' : 'Entire Display'));
+        const isWindow = hint
+          ? hint.isWindow
+          : label.toLowerCase().includes('window') || (!label.toLowerCase().includes('screen') && label.length > 0);
+        setSelectedSourceName(hint?.name || label || (isWindow ? 'Application Window' : 'Entire Display'));
         setIsWindowSource(isWindow);
+
+        // Real size of what is captured (needed to frame areas with the right proportions)
+        const { width, height } = track.getSettings();
+        if (width && height) setSourceSize({ width, height });
+
+        // Handle the user ending the share from the OS
+        track.onended = () => {
+          handleStopScreenRef.current();
+        };
       }
 
       // Connect system audio if present
@@ -409,12 +482,16 @@ export default function App() {
         audioMixerRef.current.setSystemStream(stream, audioConfig.systemVolume);
       }
 
-      // Handle user ending screen share from browser banner
-      stream.getVideoTracks()[0].onended = () => {
-        handleStopScreenRef.current();
-      };
+      // "Frame an area" was waiting for a source: start framing now
+      if (awaitingAreaRef.current) {
+        setAwaitingArea(false);
+        setIsSelectingArea(true);
+      }
+      return stream;
     } catch (err) {
       console.warn('Screen selection cancelled or failed:', err);
+      setAwaitingArea(false);
+      return null;
     }
   };
 
@@ -422,13 +499,17 @@ export default function App() {
     setIsSourcePickerOpen(false);
     try {
       if (typeof window !== 'undefined' && window.wongCapture?.setPreferredSource) {
-        await window.wongCapture.setPreferredSource(source.id);
+        const accepted = await window.wongCapture.setPreferredSource(source.id, source.display_id);
+        if (!accepted) {
+          console.warn('That capture source is no longer available');
+          setAwaitingArea(false);
+          return;
+        }
       }
-      setSelectedSourceName(source.name);
-      setIsWindowSource(!source.isScreen);
-      await acquireScreenStream();
+      await acquireScreenStream({ name: source.name, isWindow: !source.isScreen });
     } catch (err) {
       console.error('Failed to select desktop source:', err);
+      setAwaitingArea(false);
     }
   };
 
@@ -588,33 +669,12 @@ export default function App() {
     if (statusRef.current !== 'idle') return;
     let activeStream = screenStream;
     if (!activeStream) {
-      try {
-        const widthVal = settings.resolution === '4k' ? 3840 : settings.resolution === '1080p' ? 1920 : settings.resolution === '720p' ? 1280 : undefined;
-        const heightVal = settings.resolution === '4k' ? 2160 : settings.resolution === '1080p' ? 1080 : settings.resolution === '720p' ? 720 : undefined;
-
-        const constraints: DisplayMediaStreamOptions = {
-          video: {
-            frameRate: { ideal: settings.frameRate, max: 60 },
-            ...(widthVal ? { width: { ideal: widthVal } } : {}),
-            ...(heightVal ? { height: { ideal: heightVal } } : {}),
-          },
-          audio: audioConfig.systemAudio,
-        };
-
-        activeStream = await navigator.mediaDevices.getDisplayMedia(constraints);
-        setScreenStream(activeStream);
-
-        if (activeStream.getAudioTracks().length > 0) {
-          audioMixerRef.current.setSystemStream(activeStream, audioConfig.systemVolume);
-        }
-
-        activeStream.getVideoTracks()[0].onended = () => {
-          handleStopScreenRef.current();
-        };
-      } catch {
-        return; // User cancelled screen selection
-      }
+      activeStream = await acquireScreenStream();
+      if (!activeStream) return; // cancelled
     }
+
+    // The capture may be idling at a trickle: bring it back to full speed before the countdown starts
+    await applyCaptureFps(activeStream, settings.frameRate);
 
     if (!activeStream) return;
 
@@ -686,9 +746,9 @@ export default function App() {
   };
 
   // Auto Zoom handlers
-  const handleTriggerClickZoom = (normX: number, normY: number) => {
-    compositorRef.current.triggerClickZoom(normX, normY);
-    setIsZoomed(true);
+  const handleTriggerClickZoom = (normX: number, normY: number, options?: { ripple?: boolean }) => {
+    compositorRef.current.triggerClickZoom(normX, normY, options);
+    setIsZoomed(compositorRef.current.getZoomState().isZoomed);
   };
 
   const handleResetZoom = () => {
@@ -753,8 +813,18 @@ export default function App() {
 
   // Listen for global tutorial click/hotkey zoom triggers from Electron
   React.useEffect(() => {
-    return window.wongCapture?.onAutoZoomTrigger?.(({ normX, normY }) => {
-      handleTriggerClickZoom(normX, normY);
+    return window.wongCapture?.onAutoZoomTrigger?.(({ normX, normY, approximate }) => {
+      // normX/normY are positions on the recorded display. The zoom works inside the recorded AREA, so when an
+      // area is cropped, convert to area coordinates (and ignore the key if the cursor is outside it).
+      const crop = cropRegionRef.current;
+      let x = normX;
+      let y = normY;
+      if (!approximate && crop.enabled) {
+        x = (normX - crop.x) / crop.width;
+        y = (normY - crop.y) / crop.height;
+        if (x < 0 || x > 1 || y < 0 || y > 1) return;
+      }
+      handleTriggerClickZoom(x, y, { ripple: !approximate });
     });
   }, []);
 
@@ -767,6 +837,8 @@ export default function App() {
           setIsSelectingArea(false);
           return;
         }
+        setIsSourcePickerOpen(false);
+        setAwaitingArea(false);
         setIsMixerOpen(false);
         setIsWebcamModalOpen(false);
         setIsSettingsOpen(false);
@@ -785,7 +857,7 @@ export default function App() {
       // Alt+M toggles mini bar
       if (e.altKey && (e.key === 'm' || e.key === 'M')) {
         e.preventDefault();
-        setIsCompact((prev) => !prev);
+        changeCompactMode(!isCompactRef.current);
         return;
       }
 
@@ -825,7 +897,7 @@ export default function App() {
         status={status}
         isCompact={isCompact}
         isPinned={isPinned}
-        onToggleCompact={() => setIsCompact(!isCompact)}
+        onToggleCompact={() => changeCompactMode(!isCompact)}
         onTogglePin={() => setIsPinned(!isPinned)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenLibrary={() => setIsLibraryOpen(true)}
@@ -837,8 +909,9 @@ export default function App() {
         {isCompact ? (
           <div className="flex-1 relative flex flex-col items-center justify-between p-6 overflow-hidden bg-gradient-to-b from-neutral-950 via-neutral-900/90 to-neutral-950 select-none">
             {/* Ambient Background Lighting */}
-            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-sky-600/5 blur-[120px] rounded-full pointer-events-none" />
-            <div className="absolute bottom-1/4 right-1/3 w-80 h-80 bg-rose-600/5 blur-[120px] rounded-full pointer-events-none" />
+            {/* soft ambient glows: plain gradients (a 120px blur filter is re-painted by the GPU every frame) */}
+            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[34rem] h-[34rem] rounded-full pointer-events-none" style={{ background: 'radial-gradient(closest-side, rgba(2,132,199,0.08), transparent)' }} />
+            <div className="absolute bottom-1/4 right-1/3 w-[28rem] h-[28rem] rounded-full pointer-events-none" style={{ background: 'radial-gradient(closest-side, rgba(225,29,72,0.07), transparent)' }} />
 
             {/* Top Area: Centered Floating MiniBar */}
             <div className="z-30 mt-4 max-w-full">
@@ -862,19 +935,14 @@ export default function App() {
                   compositorRef.current.updateCropRegion(newCrop);
                 }}
                 isSelectingArea={isSelectingArea}
-                onStartAreaSelection={() => {
-                  if (!screenStream) {
-                    handleRequestScreen('area');
-                  }
-                  setIsSelectingArea(true);
-                }}
+                onStartAreaSelection={beginAreaSelection}
                 selectedSourceName={selectedSourceName}
                 isWindowSource={isWindowSource}
                 hasActiveScreen={screenStream !== null}
                 screenStream={screenStream}
                 settings={settings}
                 onUpdateSettings={(updates) => setSettings((prev) => ({ ...prev, ...updates }))}
-                micLevel={audioLevels.micLevel}
+                sourceSize={sourceSize}
                 clipsCount={clips.length}
                 onOpenClips={() => setIsLibraryOpen(true)}
                 onOpenSettings={() => setIsSettingsOpen(true)}
@@ -887,7 +955,7 @@ export default function App() {
                 onStopRecording={handleStopRecording}
                 onTogglePause={handleTogglePause}
                 onTakeSnapshot={handleTakeSnapshot}
-                onExpandStudio={() => setIsCompact(false)}
+                onExpandStudio={() => changeCompactMode(false)}
                 onStopScreen={handleStopScreen}
               />
             </div>
@@ -896,10 +964,10 @@ export default function App() {
             <div className="z-20 my-auto flex flex-col items-center max-w-lg w-full text-center">
               {screenStream ? (
                 /* Source Connected: Active Status & Safe Monitor */
-                <div className="w-full bg-neutral-900/80 backdrop-blur-md border border-neutral-800 rounded-2xl p-5 shadow-2xl text-left">
+                <div className="w-full bg-neutral-900/80 border border-neutral-800 rounded-2xl p-5 shadow-2xl text-left">
                   <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                      <div className="w-3 h-3 rounded-full bg-emerald-500" />
                       <div>
                         <div className="text-xs font-bold text-white tracking-wide truncate max-w-[260px]">
                           {selectedSourceName || 'Active Capture Source'}
@@ -939,10 +1007,7 @@ export default function App() {
                       <span className="font-semibold text-emerald-400 flex items-center gap-1.5">
                         {audioConfig.microphone ? 'Connected' : 'Muted'}
                         {audioConfig.microphone && (
-                          <span 
-                            className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" 
-                            style={{ opacity: Math.max(0.3, audioLevels.micLevel * 2) }}
-                          />
+                          <MicPulseDot />
                         )}
                       </span>
                     </div>
@@ -966,7 +1031,7 @@ export default function App() {
                       <span>to Zoom Cursor</span>
                     </span>
                     <button
-                      onClick={() => setIsCompact(false)}
+                      onClick={() => changeCompactMode(false)}
                       className="text-sky-400 hover:text-sky-300 font-medium cursor-pointer"
                     >
                       Open Studio Preview →
@@ -975,7 +1040,7 @@ export default function App() {
                 </div>
               ) : (
                 /* No Source Connected: Quick Start Guide */
-                <div className="w-full bg-neutral-900/60 backdrop-blur-md border border-neutral-800/80 rounded-2xl p-6 shadow-2xl">
+                <div className="w-full bg-neutral-900/60 border border-neutral-800/80 rounded-2xl p-6 shadow-2xl">
                   <div className="w-12 h-12 rounded-2xl bg-neutral-800/80 border border-neutral-700/60 flex items-center justify-center mx-auto mb-3 text-sky-400 shadow-inner">
                     <Monitor className="w-6 h-6" />
                   </div>
@@ -1020,7 +1085,7 @@ export default function App() {
               <span>Windows x64 Native</span>
               <span>•</span>
               <button 
-                onClick={() => setIsCompact(false)} 
+                onClick={() => changeCompactMode(false)} 
                 className="hover:text-neutral-300 underline cursor-pointer"
               >
                 Switch to Full Studio Mode
@@ -1029,13 +1094,14 @@ export default function App() {
 
             {/* Interactive Area Selection Overlay (when isSelectingArea is true in Mini Bar mode) */}
             {isSelectingArea && (
-              <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-xs flex items-center justify-center">
+              <div className="absolute inset-0 z-40 bg-black/70 flex items-center justify-center">
                 <div className="relative w-full h-full p-8 flex items-center justify-center">
+                  <React.Suspense fallback={null}>
                   <SelectionToolOverlay
                     containerWidth={typeof window !== 'undefined' ? window.innerWidth - 64 : 1200}
                     containerHeight={typeof window !== 'undefined' ? window.innerHeight - 120 : 700}
-                    sourceWidth={1920}
-                    sourceHeight={1080}
+                    sourceWidth={sourceSize.width}
+                    sourceHeight={sourceSize.height}
                     cropRegion={cropRegion}
                     onChangeCropRegion={(newCrop) => {
                       setCropRegion(newCrop);
@@ -1044,6 +1110,7 @@ export default function App() {
                     isSelecting={isSelectingArea}
                     onToggleSelecting={() => setIsSelectingArea(false)}
                   />
+                  </React.Suspense>
                   <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2">
                     <button
                       onClick={() => setIsSelectingArea(false)}
@@ -1057,6 +1124,7 @@ export default function App() {
             )}
           </div>
         ) : (
+          <React.Suspense fallback={<div className="flex-1" />}>
           <StudioPreview
             screenStream={screenStream}
             webcamStream={webcamStream}
@@ -1087,8 +1155,6 @@ export default function App() {
             resolution={settings.resolution}
             frameRate={settings.frameRate}
             format={settings.format}
-            micLevel={audioLevels.micLevel}
-            systemLevel={audioLevels.systemLevel}
             onRequestScreen={handleRequestScreen}
             onStopScreen={handleStopScreen}
             onStartRecording={handleStartRecording}
@@ -1099,83 +1165,92 @@ export default function App() {
             onOpenWebcamSettings={() => setIsWebcamModalOpen(true)}
             onTakeSnapshot={handleTakeSnapshot}
             onOpenMixer={() => setIsMixerOpen(true)}
-            onSwitchToCompact={() => setIsCompact(true)}
+            onSwitchToCompact={() => changeCompactMode(true)}
           />
+          </React.Suspense>
         )}
       </div>
 
-      {/* Audio Mixer Flyout Modal */}
-      <AudioMixerPanel
-        isOpen={isMixerOpen}
-        onClose={() => setIsMixerOpen(false)}
-        audioConfig={audioConfig}
-        onUpdateConfig={(updates) => setAudioConfig((prev) => ({ ...prev, ...updates }))}
-        micLevel={audioLevels.micLevel}
-        systemLevel={audioLevels.systemLevel}
-      />
+      {/* Modals are fetched the first time they open and unmount when closed (keeps memory low) */}
+      <React.Suspense fallback={null}>
+        {isMixerOpen && (
+          <AudioMixerPanel
+            isOpen
+            onClose={() => setIsMixerOpen(false)}
+            audioConfig={audioConfig}
+            onUpdateConfig={(updates: Partial<AudioConfig>) => setAudioConfig((prev) => ({ ...prev, ...updates }))}
+          />
+        )}
 
-      {/* Webcam Configuration Modal */}
-      <WebcamSettingsModal
-        isOpen={isWebcamModalOpen}
-        onClose={() => setIsWebcamModalOpen(false)}
-        config={webcamConfig}
-        onUpdateConfig={(updates) => setWebcamConfig((prev) => ({ ...prev, ...updates }))}
-        webcamStream={webcamStream}
-      />
+        {isWebcamModalOpen && (
+          <WebcamSettingsModal
+            isOpen
+            onClose={() => setIsWebcamModalOpen(false)}
+            config={webcamConfig}
+            onUpdateConfig={(updates: Partial<WebcamConfig>) => setWebcamConfig((prev) => ({ ...prev, ...updates }))}
+            webcamStream={webcamStream}
+          />
+        )}
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onUpdateSettings={(updates) => setSettings((prev) => ({ ...prev, ...updates }))}
-      />
+        {isSettingsOpen && (
+          <SettingsModal
+            isOpen
+            onClose={() => setIsSettingsOpen(false)}
+            settings={settings}
+            onUpdateSettings={(updates: Partial<RecordingSettings>) => setSettings((prev) => ({ ...prev, ...updates }))}
+          />
+        )}
 
-      {/* Recorded Clips Library Drawer / Modal */}
-      <ClipLibrary
-        isOpen={isLibraryOpen}
-        onClose={() => setIsLibraryOpen(false)}
-        clips={clips}
-        onSelectClip={(clip) => setSelectedClip(clip)}
-        onDeleteClip={handleDeleteClip}
-        onClearAll={handleClearAllClips}
-      />
+        {isLibraryOpen && (
+          <ClipLibrary
+            isOpen
+            onClose={() => setIsLibraryOpen(false)}
+            clips={clips}
+            onSelectClip={(clip: RecordedClip) => setSelectedClip(clip)}
+            onDeleteClip={handleDeleteClip}
+            onClearAll={handleClearAllClips}
+          />
+        )}
 
-      {/* Built-in Video Player & Trimmer Modal */}
-      <ClipPlayerModal
-        isOpen={selectedClip !== null}
-        clip={selectedClip}
-        onClose={() => setSelectedClip(null)}
-        onUpdateTitle={handleUpdateClipTitle}
-        onSaveNewTrimmedClip={(newClip) => {
-          saveClipToDB(newClip);
-          setClips((prev) => [newClip, ...prev]);
-        }}
-      />
+        {selectedClip && (
+          <ClipPlayerModal
+            isOpen
+            clip={selectedClip}
+            onClose={() => setSelectedClip(null)}
+            onUpdateTitle={handleUpdateClipTitle}
+            onSaveNewTrimmedClip={(newClip: RecordedClip) => {
+              saveClipToDB(newClip);
+              setClips((prev) => [newClip, ...prev]);
+            }}
+          />
+        )}
 
-      {/* Capture Source & Area Picker Modal */}
-      <SourcePickerModal
-        isOpen={isSourcePickerOpen}
-        onClose={() => setIsSourcePickerOpen(false)}
-        initialTab={sourcePickerTab}
-        onSelectSource={handleSelectDesktopSource}
-        onSelectBrowserNative={async () => {
-          setIsSourcePickerOpen(false);
-          await acquireScreenStream();
-        }}
-        cropRegion={cropRegion}
-        onChangeCropRegion={(newCrop) => {
-          setCropRegion(newCrop);
-          compositorRef.current.updateCropRegion(newCrop);
-        }}
-        onStartAreaSelection={() => {
-          if (!screenStream) {
-            handleRequestScreen('area');
-          }
-          setIsSelectingArea(true);
-        }}
-        hasActiveScreen={screenStream !== null}
-      />
+        {isSourcePickerOpen && (
+          <SourcePickerModal
+            isOpen
+            onClose={() => {
+              setIsSourcePickerOpen(false);
+              setAwaitingArea(false);
+            }}
+            initialTab={sourcePickerTab}
+            onSelectSource={handleSelectDesktopSource}
+            onSelectBrowserNative={async () => {
+              setIsSourcePickerOpen(false);
+              await acquireScreenStream();
+            }}
+            cropRegion={cropRegion}
+            onChangeCropRegion={(newCrop: CropRegion) => {
+              setCropRegion(newCrop);
+              compositorRef.current.updateCropRegion(newCrop);
+            }}
+            onStartAreaSelection={beginAreaSelection}
+            hasActiveScreen={screenStream !== null}
+            awaitingAreaFraming={awaitingAreaFraming}
+            sourceWidth={sourceSize.width}
+            sourceHeight={sourceSize.height}
+          />
+        )}
+      </React.Suspense>
     </div>
   );
 }

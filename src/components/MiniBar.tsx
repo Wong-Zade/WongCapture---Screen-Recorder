@@ -1,4 +1,6 @@
 import React from 'react';
+import { MicUnderline } from './LevelMeters';
+import { presetRegion } from '../utils/cropPresets';
 import { 
   Monitor, 
   AppWindow, 
@@ -53,10 +55,10 @@ interface MiniBarProps {
   selectedSourceName: string;
   isWindowSource: boolean;
   hasActiveScreen: boolean;
+  sourceSize: { width: number; height: number };
   screenStream: MediaStream | null;
   settings: RecordingSettings;
   onUpdateSettings: (updates: Partial<RecordingSettings>) => void;
-  micLevel: number;
   clipsCount: number;
   onOpenClips: () => void;
   onOpenSettings: () => void;
@@ -90,10 +92,10 @@ export const MiniBar: React.FC<MiniBarProps> = ({
   selectedSourceName,
   isWindowSource,
   hasActiveScreen,
+  sourceSize,
   screenStream,
   settings,
   onUpdateSettings,
-  micLevel,
   clipsCount,
   onOpenClips,
   onOpenSettings,
@@ -145,42 +147,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
 
   const handleApplyPreset = (preset: SelectionPreset) => {
     setActiveMenu(null);
-    if (preset === 'full') {
-      onChangeCropRegion({
-        enabled: false,
-        preset: 'full',
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-      });
-      return;
-    }
-
-    let normW = 0.8;
-    let normH = 0.8;
-    if (preset === '16:9') {
-      normW = 0.85;
-      normH = (normW * 9) / 16;
-    } else if (preset === '4:3') {
-      normW = 0.75;
-      normH = (normW * 3) / 4;
-    } else if (preset === '1:1') {
-      normH = 0.7;
-      normW = (normH * 9) / 16;
-    } else if (preset === '9:16') {
-      normH = 0.9;
-      normW = (normH * 9) / 16;
-    }
-
-    onChangeCropRegion({
-      enabled: true,
-      preset,
-      x: Math.max(0, (1 - normW) / 2),
-      y: Math.max(0, (1 - normH) / 2),
-      width: normW,
-      height: normH,
-    });
+    onChangeCropRegion(presetRegion(preset, sourceSize.width, sourceSize.height));
   };
 
   const zoomLevels = [1.5, 2.0, 2.5, 3.0];
@@ -188,7 +155,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
   return (
     <div ref={menuRef} className="relative inline-flex items-center select-none">
       {/* Floating Mini Bar Container */}
-      <div className="flex items-center gap-2 p-1.5 bg-neutral-900/95 backdrop-blur-2xl border border-neutral-700/80 rounded-2xl shadow-2xl shadow-black/85 text-xs text-neutral-200">
+      <div className="flex items-center gap-2 p-1.5 bg-neutral-900/95 border border-neutral-700/80 rounded-2xl shadow-2xl shadow-black/85 text-xs text-neutral-200">
         
         {/* Drag Handle */}
         <div 
@@ -264,7 +231,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
         {/* Source Active Indicator (if connected) */}
         {hasActiveScreen && (
           <div className="hidden md:flex items-center gap-1.5 px-2 py-1 bg-neutral-950/60 border border-neutral-800/70 rounded-lg text-[11px] text-neutral-300 max-w-[140px] truncate">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
             <span className="truncate">{selectedSourceName || 'Screen Ready'}</span>
             <button
               onClick={onStopScreen}
@@ -298,12 +265,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
               title={audioConfig.microphone ? 'Microphone Active (Click to mute, right-click for mixer)' : 'Microphone Muted'}
             >
               {audioConfig.microphone ? <Mic className="w-4 h-4 text-emerald-400" /> : <MicOff className="w-4 h-4" />}
-              {audioConfig.microphone && (
-                <span 
-                  className="absolute bottom-1 left-2 right-2 h-0.5 bg-emerald-400 rounded-full transition-all"
-                  style={{ transform: `scaleX(${Math.max(0.1, micLevel)})` }}
-                />
-              )}
+              {audioConfig.microphone && <MicUnderline />}
             </button>
           </div>
 

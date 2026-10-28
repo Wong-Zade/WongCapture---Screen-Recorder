@@ -21,7 +21,8 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "!**/*.map"
     ],
     "win": {
       "target": [
@@ -44,7 +45,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "electronLanguages": [
+      "en-US"
+    ],
+    "asar": true
   },
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.3.0",
@@ -64,5 +69,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }
