@@ -77,3 +77,34 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.28);
 }
+
+/* ---------------------------------------------------------------------------
+   Floating-bar shell (desktop app). The window is transparent and exactly as big as the bar,
+   so there is nothing behind it. <html data-shell="bar"> is set when running inside Electron.
+   --------------------------------------------------------------------------- */
+html[data-shell="bar"],
+html[data-shell="bar"] body,
+html[data-shell="bar"] #root {
+  background: transparent;
+  overflow: hidden;
+}
+
+/* Drag the bar by any empty part of it; everything clickable inside must opt out of dragging */
+.drag-region { -webkit-app-region: drag; }
+html[data-shell="bar"] button,
+html[data-shell="bar"] input,
+html[data-shell="bar"] select,
+html[data-shell="bar"] textarea,
+html[data-shell="bar"] label,
+html[data-shell="bar"] a,
+html[data-shell="bar"] [data-menu],
+html[data-shell="bar"] .fixed {
+  -webkit-app-region: no-drag;
+}
+
+/* Panels (settings, clips, source picker...) open right under the bar instead of covering the window, and
+   without dimming anything: there is no app window behind them, only the desktop. */
+html[data-shell="bar"] .fixed.inset-0 {
+  inset: var(--shell-bar-h, 96px) 0 0 0;
+  background: transparent !important;
+}

@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Select area to record</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; cursor: crosshair; user-select: none;
+    font: 13px 'Segoe UI', system-ui, -apple-system, sans-serif; color: #fff; }
+  #dim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); }
+  #hint { position: fixed; top: 28px; left: 50%; transform: translateX(-50%); padding: 9px 16px; border-radius: 999px;
+    background: rgba(17, 17, 17, 0.92); border: 1px solid rgba(255, 255, 255, 0.14); white-space: nowrap; pointer-events: none; }
+  #hint b { color: #38bdf8; font-weight: 600; }
+  /* The huge shadow dims everything outside the selection; the inside stays clear */
+  #sel { position: fixed; display: none; box-sizing: border-box; border: 2px solid #0ea5e9; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45); pointer-events: none; }
+  #size { position: absolute; left: -2px; top: -30px; padding: 3px 8px; border-radius: 6px; background: #0ea5e9; font: 600 12px 'Consolas', monospace; white-space: nowrap; }
+  #bar { position: fixed; display: none; gap: 8px; padding: 6px; border-radius: 12px; cursor: default;
+    background: rgba(17, 17, 17, 0.96); border: 1px solid rgba(255, 255, 255, 0.16); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
+  #bar button { font: 600 12px 'Segoe UI', system-ui, sans-serif; color: #fff; border: 0; border-radius: 8px; padding: 7px 14px; cursor: pointer; background: #262626; }
+  #bar button:hover { background: #3a3a3a; }
+  #bar #ok { background: #0284c7; }
+  #bar #ok:hover { background: #0ea5e9; }
+</style>
+</head>
+<body>
+  <div id="dim"></div>
+  <div id="hint">Drag to select the area to record &nbsp;·&nbsp; <b>Enter</b> to confirm &nbsp;·&nbsp; <b>Esc</b> to cancel</div>
+  <div id="sel"><div id="size"></div></div>
+  <div id="bar">
+    <button id="ok">Record this area</button>
+    <button id="redo">Redraw</button>
+    <button id="cancel">Cancel</button>
+  </div>
+<script>
+  const sf = (window.areaOverlay && window.areaOverlay.scaleFactor) || 1;
+  const $ = (id) => document.getElementById(id);
+  const dim = $('dim'), sel = $('sel'), size = $('size'), bar = $('bar'), hint = $('hint');
+  let start = null, rect = null, drawing = false;
+
+  const clampX = (v) => Math.max(0, Math.min(innerWidth, v));
+  const clampY = (v) => Math.max(0, Math.min(innerHeight, v));
+
+  function render() {
+    if (!rect) { sel.style.display = 'none'; dim.style.display = 'block'; bar.style.display = 'none'; hint.style.display = 'block'; return; }
+    dim.style.display = 'none'; hint.style.display = 'none';
+    sel.style.display = 'block';
+    sel.style.left = rect.x + 'px'; sel.style.top = rect.y + 'px';
+    sel.style.width = rect.w + 'px'; sel.style.height = rect.h + 'px';
+    // Real pixels (what ends up in the video), not scaled-down CSS pixels
+    size.textContent = Math.round(rect.w * sf) + ' \u00d7 ' + Math.round(rect.h * sf);
+    size.style.top = rect.y < 36 ? '6px' : '-30px';
+  }
+
+  function placeBar() {
+    bar.style.display = 'flex';
+    const bw = bar.offsetWidth, bh = bar.offsetHeight;
+    let top = rect.y + rect.h + 12;
+    if (top + bh > innerHeight - 8) top = Math.max(8, rect.y - bh - 12 - 28);
+    if (top + bh > innerHeight - 8) top = rect.y + rect.h - bh - 12;       // selection fills the screen: tuck inside
+    let left = rect.x + rect.w - bw;
+    left = Math.max(8, Math.min(left, innerWidth - bw - 8));
+    bar.style.left = left + 'px'; bar.style.top = top + 'px';
+  }
+
+  function confirm() {
+    if (!rect) return;
+    window.areaOverlay.submit({ x: rect.x, y: rect.y, width: rect.w, height: rect.h, viewWidth: innerWidth, viewHeight: innerHeight });
+  }
+  const cancel = () => window.areaOverlay.cancel();
+
+  addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target.closest('#bar')) return;
+    drawing = true; start = { x: clampX(e.clientX), y: clampY(e.clientY) }; rect = null; render();
+  });
+  addEventListener('mousemove', (e) => {
+    if (!drawing) return;
+    const x = clampX(e.clientX), y = clampY(e.clientY);
+    rect = { x: Math.min(start.x, x), y: Math.min(start.y, y), w: Math.abs(x - start.x), h: Math.abs(y - start.y) };
+    render();
+  });
+  addEventListener('mouseup', () => {
+    if (!drawing) return;
+    drawing = false;
+    if (!rect || rect.w < 40 || rect.h < 40) { rect = null; render(); return; }   // too small: ignore
+    placeBar();
+  });
+  addEventListener('dblclick', (e) => { if (rect && !e.target.closest('#bar')) confirm(); });
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') cancel();
+    else if (e.key === 'Enter' && rect && !drawing) confirm();
+  });
+  addEventListener('contextmenu', (e) => { e.preventDefault(); if (rect) { rect = null; render(); } else cancel(); });
+  $('ok').addEventListener('click', confirm);
+  $('redo').addEventListener('click', () => { rect = null; render(); });
+  $('cancel').addEventListener('click', cancel);
+  render();
+</script>
+</body>
+</html>

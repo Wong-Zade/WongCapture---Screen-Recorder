@@ -43,7 +43,6 @@ export interface RecordingSettings {
   filenamePrefix: string;
   preventMirrorLoop: boolean; // Anti-mirror protection to shield preview during recording
   autoMinimizeOnRecord: boolean; // Auto minimize window when recording starts
-  autoSwitchToMiniBar: boolean; // Auto switch to compact mini bar HUD when recording starts
 }
 
 export interface RecordedClip {

@@ -28,8 +28,6 @@ interface SourcePickerModalProps {
   onStartAreaSelection: () => void;
   hasActiveScreen: boolean;
   initialTab?: 'windows' | 'screens' | 'area';
-  /** Area framing was requested before any source was connected: pick one first. */
-  awaitingAreaFraming?: boolean;
   /** Size of the connected source (used to give area presets their true shape). */
   sourceWidth?: number;
   sourceHeight?: number;
@@ -45,7 +43,6 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
   onStartAreaSelection,
   hasActiveScreen,
   initialTab,
-  awaitingAreaFraming = false,
   sourceWidth = 1920,
   sourceHeight = 1080,
 }) => {
@@ -212,13 +209,6 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
           )}
         </div>
 
-        {awaitingAreaFraming && activeTab !== 'area' && (
-          <div className="mx-6 mt-4 px-3 py-2 rounded-lg bg-sky-950/50 border border-sky-500/30 text-[11px] text-sky-200 flex items-center gap-2 shrink-0">
-            <Crop className="w-3.5 h-3.5 shrink-0" />
-            <span>Pick a screen or window first, then you'll drag out the area to record.</span>
-          </div>
-        )}
-
         {/* Tab 1 & 2: Electron Windows & Screens */}
         {activeTab !== 'area' && hasElectronCapture && (
           <div className="p-6 overflow-y-auto flex-1">
@@ -300,7 +290,7 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
                 className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs transition-all shadow-md shadow-sky-950/50 flex items-center gap-2 shrink-0 cursor-pointer"
               >
                 <Move className="w-3.5 h-3.5" />
-                <span>Frame Area on Screen</span>
+                <span>Draw Area on Screen…</span>
               </button>
             </div>
 

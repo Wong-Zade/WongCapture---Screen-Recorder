@@ -16,7 +16,9 @@ import {
   Video, 
   VideoOff, 
   Camera, 
-  Maximize2, 
+  Minus, 
+  Pin, 
+  PinOff, 
   GripHorizontal, 
   ZoomIn, 
   Settings, 
@@ -71,7 +73,13 @@ interface MiniBarProps {
   onStopRecording: () => void;
   onTogglePause: () => void;
   onTakeSnapshot: () => void;
-  onExpandStudio: () => void;
+  /** Window buttons (desktop app): pin on top, minimize, close. */
+  windowControls?: {
+    isPinned: boolean;
+    onTogglePin: () => void;
+    onMinimize: () => void;
+    onClose: () => void;
+  };
   onStopScreen: () => void;
 }
 
@@ -108,11 +116,31 @@ export const MiniBar: React.FC<MiniBarProps> = ({
   onStopRecording,
   onTogglePause,
   onTakeSnapshot,
-  onExpandStudio,
+  windowControls,
   onStopScreen,
 }) => {
   const [activeMenu, setActiveMenu] = React.useState<'area' | 'zoom' | 'audio' | 'webcam' | null>(null);
   const menuRef = React.useRef<HTMLDivElement>(null);
+  const [menuUp, setMenuUp] = React.useState(false);
+  const [menuSpace, setMenuSpace] = React.useState(0);
+
+  // Open a dropdown below the bar, or above it when the bar sits near the bottom of the screen
+  const toggleMenu = (name: 'area' | 'zoom') => {
+    if (activeMenu === name) {
+      setActiveMenu(null);
+      return;
+    }
+    const workAreaBottom = ((window.screen as any).availTop ?? 0) + window.screen.availHeight;
+    const spaceBelow = workAreaBottom - (window.screenY + window.outerHeight);
+    setMenuUp(spaceBelow < 340);
+    setActiveMenu(name);
+  };
+
+  // The window is only as big as the bar, so while a dropdown is open reserve room for it
+  React.useLayoutEffect(() => {
+    const menu = menuRef.current?.querySelector('[data-menu]') as HTMLElement | null;
+    setMenuSpace(menu ? menu.offsetHeight + 10 : 0);
+  }, [activeMenu]);
 
   // Close popup menus on click outside
   React.useEffect(() => {
@@ -153,9 +181,16 @@ export const MiniBar: React.FC<MiniBarProps> = ({
   const zoomLevels = [1.5, 2.0, 2.5, 3.0];
 
   return (
-    <div ref={menuRef} className="relative inline-flex items-center select-none">
-      {/* Floating Mini Bar Container */}
-      <div className="flex items-center gap-2 p-1.5 bg-neutral-900/95 border border-neutral-700/80 rounded-2xl shadow-2xl shadow-black/85 text-xs text-neutral-200">
+    <div
+      ref={menuRef}
+      className="inline-flex flex-col items-start select-none"
+      data-menu-open={activeMenu ? 'true' : 'false'}
+      data-menu-up={menuUp ? 'true' : 'false'}
+    >
+      {activeMenu && menuUp && <div aria-hidden style={{ height: menuSpace }} />}
+      <div className="relative">
+      {/* Floating Mini Bar Container (the whole bar is a drag handle; buttons inside stay clickable) */}
+      <div className="drag-region flex items-center gap-2 p-1.5 bg-neutral-900/95 border border-neutral-700/80 rounded-2xl shadow-[0_4px_14px_rgba(0,0,0,0.5)] text-xs text-neutral-200">
         
         {/* Drag Handle */}
         <div 
@@ -208,7 +243,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
           {/* Select Area Mode */}
           <div className="relative">
             <button
-              onClick={() => setActiveMenu(activeMenu === 'area' ? null : 'area')}
+              onClick={() => toggleMenu('area')}
               className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
                 cropRegion.enabled
                   ? 'bg-amber-600 text-white shadow-sm shadow-amber-950'
@@ -323,7 +358,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setActiveMenu(activeMenu === 'zoom' ? null : 'zoom');
+                  toggleMenu('zoom');
                 }}
                 className="hover:text-white transition-colors cursor-pointer"
               >
@@ -428,15 +463,34 @@ export const MiniBar: React.FC<MiniBarProps> = ({
             <Settings className="w-4 h-4" />
           </button>
 
-          {/* Expand to Studio */}
-          <button
-            onClick={onExpandStudio}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-neutral-950/50 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-transparent hover:border-neutral-700 transition-all cursor-pointer"
-            title="Expand to Full Studio Canvas"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span className="hidden lg:inline text-[11px] font-medium">Studio</span>
-          </button>
+          {/* Window controls (desktop app) */}
+          {windowControls && (
+            <div className="flex items-center gap-0.5 ml-1 pl-2 border-l border-neutral-800">
+              <button
+                onClick={windowControls.onTogglePin}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  windowControls.isPinned ? 'text-sky-400 hover:bg-neutral-800' : 'text-neutral-500 hover:text-white hover:bg-neutral-800'
+                }`}
+                title={windowControls.isPinned ? 'Always on top (click to unpin)' : 'Keep on top of other windows'}
+              >
+                {windowControls.isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                onClick={windowControls.onMinimize}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                title="Minimize"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={windowControls.onClose}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-rose-600 transition-colors cursor-pointer"
+                title="Close WongCapture"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -444,7 +498,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
       {/* AREA SELECTION DROPDOWN MENU                                              */}
       {/* ========================================================================= */}
       {activeMenu === 'area' && (
-        <div className="absolute top-full mt-2 left-32 z-50 w-64 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150">
+        <div data-menu className={`absolute ${menuUp ? 'bottom-full mb-2' : 'top-full mt-2'} left-32 z-50 w-64 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150`}>
           <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-neutral-800 px-1">
             <span className="text-xs font-semibold text-neutral-200">Selection Area Presets</span>
             <span className="text-[10px] text-neutral-400">Crop Mode</span>
@@ -483,7 +537,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-medium transition-colors cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Frame Area on Screen</span>
+              <span>Draw Area on Screen…</span>
             </button>
           </div>
         </div>
@@ -493,7 +547,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({
       {/* ZOOM FACTOR DROPDOWN MENU                                                 */}
       {/* ========================================================================= */}
       {activeMenu === 'zoom' && (
-        <div className="absolute top-full mt-2 left-64 z-50 w-52 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150">
+        <div data-menu className={`absolute ${menuUp ? 'bottom-full mb-2' : 'top-full mt-2'} left-64 z-50 w-52 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150`}>
           <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-neutral-800 px-1">
             <span className="text-xs font-semibold text-neutral-200">Auto-Zoom Magnification</span>
             <span className="text-[10px] text-indigo-400 font-mono">F10 Hotkey</span>
@@ -529,6 +583,8 @@ export const MiniBar: React.FC<MiniBarProps> = ({
           </label>
         </div>
       )}
+      </div>
+      {activeMenu && !menuUp && <div aria-hidden style={{ height: menuSpace }} />}
     </div>
   );
 };
