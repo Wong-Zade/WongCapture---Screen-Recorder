@@ -9,11 +9,10 @@ declare global {
     };
     wongWindow?: {
       minimize: () => void;
-      maximize: () => void;
       close: () => void;
       setAlwaysOnTop: (pinned: boolean) => void;
       setContentProtection?: (enabled: boolean) => void;
-      onMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
+      setLayout?: (layout: { width: number; height: number; expanded: boolean; anchor: 'top' | 'bottom' }) => void;
     };
     wongCapture?: {
       getSources: () => Promise<Array<{
@@ -25,6 +24,12 @@ declare global {
         display_id?: string;
       }>>;
       setPreferredSource: (sourceId: string | null, displayId?: string) => Promise<boolean>;
+      selectAreaOnScreen?: () => Promise<{
+        region: { x: number; y: number; width: number; height: number };
+        sourceId: string;
+        sourceName: string;
+        changedSource: boolean;
+      } | null>;
       onAutoZoomTrigger?: (callback: (coords: { normX: number; normY: number; approximate?: boolean }) => void) => () => void;
     };
   }

@@ -14,7 +14,6 @@ import {
   CropRegion,
   DesktopCaptureSource
 } from './types';
-import { WindowsTitleBar } from './components/WindowsTitleBar';
 import { MiniBar } from './components/MiniBar';
 import { AudioMixer } from './utils/audioMixer';
 import { publishAudioLevels } from './utils/audioLevelStore';
@@ -35,8 +34,6 @@ function lazyNamed<K extends string, C extends React.ComponentType<any>>(load: (
   return React.lazy(() => load().then((m) => ({ default: m[name] })));
 }
 
-const StudioPreview = lazyNamed(() => import('./components/StudioPreview'), 'StudioPreview');
-const SelectionToolOverlay = lazyNamed(() => import('./components/SelectionToolOverlay'), 'SelectionToolOverlay');
 const AudioMixerPanel = lazyNamed(() => import('./components/AudioMixerPanel'), 'AudioMixerPanel');
 const WebcamSettingsModal = lazyNamed(() => import('./components/WebcamSettingsModal'), 'WebcamSettingsModal');
 const ClipPlayerModal = lazyNamed(() => import('./components/ClipPlayerModal'), 'ClipPlayerModal');
@@ -53,7 +50,6 @@ const DEFAULT_SETTINGS: RecordingSettings = {
   filenamePrefix: 'WongCapture',
   preventMirrorLoop: true,
   autoMinimizeOnRecord: false,
-  autoSwitchToMiniBar: false,
 };
 
 const DEFAULT_AUDIO: AudioConfig = {
@@ -138,42 +134,17 @@ export default function App() {
     }
   });
 
-  const [isSelectingArea, setIsSelectingArea] = React.useState(false);
-  const [isZoomed, setIsZoomed] = React.useState(false);
+  const [isSelectingArea, setIsSelectingArea] = React.useState(false); // the on-screen area overlay is open
 
-  // UI Modes & Modals
-  const [isCompact, setIsCompact] = React.useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('wongcapture_compact_mode');
-      return saved !== null ? JSON.parse(saved) : true;
-    } catch {
-      return true;
-    }
-  });
-  // User-initiated switches are remembered; the automatic switch when recording starts is not
-  const changeCompactMode = (next: boolean) => {
-    setIsCompact(next);
-    try {
-      localStorage.setItem('wongcapture_compact_mode', JSON.stringify(next));
-    } catch {
-      /* storage unavailable: just don't remember */
-    }
-  };
+  // Modals / panels
   const [sourcePickerTab, setSourcePickerTab] = React.useState<'windows' | 'screens' | 'area'>('screens');
-  const [isPinned, setIsPinned] = React.useState(false);
+  const [isPinned, setIsPinned] = React.useState(true); // the bar floats above other windows by default
   const [isMixerOpen, setIsMixerOpen] = React.useState(false);
   const [isWebcamModalOpen, setIsWebcamModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = React.useState(false);
   const [isSourcePickerOpen, setIsSourcePickerOpen] = React.useState(false);
   const [sourceSize, setSourceSize] = React.useState({ width: 1920, height: 1080 });
-  // "Frame an area" was chosen before any screen was connected: pick a source first, then start framing
-  const [awaitingAreaFraming, setAwaitingAreaFraming] = React.useState(false);
-  const awaitingAreaRef = React.useRef(false);
-  const setAwaitingArea = (value: boolean) => {
-    awaitingAreaRef.current = value;
-    setAwaitingAreaFraming(value);
-  };
   const [selectedClip, setSelectedClip] = React.useState<RecordedClip | null>(null);
 
   // Streams & Engine
@@ -208,8 +179,6 @@ export default function App() {
   const handleStopScreenRef = React.useRef<() => void>(() => {});
   const cropRegionRef = React.useRef<CropRegion>(cropRegion);
   cropRegionRef.current = cropRegion;
-  const isCompactRef = React.useRef(isCompact);
-  isCompactRef.current = isCompact;
   statusRef.current = status;
   screenStreamRef.current = screenStream;
 
@@ -250,13 +219,11 @@ export default function App() {
     getAllClipsFromDB().then(setClips).catch(console.warn);
   }, []);
 
-  // Capture at a trickle while nothing is recording and no live preview is showing (compact mode has none)
+  // The bar has no live preview, so while nothing is recording the capture only needs to trickle along
   React.useEffect(() => {
     if (!screenStream) return;
-    const previewVisible = !isCompact;
-    const fps = status === 'idle' ? (previewVisible ? Math.min(30, settings.frameRate) : 5) : settings.frameRate;
-    applyCaptureFps(screenStream, fps);
-  }, [screenStream, status, isCompact, settings.frameRate]);
+    applyCaptureFps(screenStream, status === 'idle' ? 5 : settings.frameRate);
+  }, [screenStream, status, settings.frameRate]);
 
   // "Hide WongCapture from recordings" follows the Settings toggle (on by default)
   React.useEffect(() => {
@@ -285,13 +252,6 @@ export default function App() {
     const id = window.setInterval(() => publishAudioLevels(audioMixerRef.current.getLevels()), 100);
     return () => clearInterval(id);
   }, [hasAudioSource]);
-
-  // The zoom indicator only matters while recording (the compositor only runs then)
-  React.useEffect(() => {
-    if (status !== 'recording' && status !== 'paused') return;
-    const id = window.setInterval(() => setIsZoomed(compositorRef.current.getZoomState().isZoomed), 250);
-    return () => clearInterval(id);
-  }, [status]);
 
   // Webcam stream management (cleanup stops the camera when the device changes, it is disabled, or on unmount)
   React.useEffect(() => {
@@ -426,15 +386,32 @@ export default function App() {
     await handleRequestScreen('windows');
   };
 
-  // Start framing a recording area. That needs a connected source to frame against, so if there is none yet
-  // ask for one first; framing starts as soon as the source is connected.
+  // Record just part of the screen: a full-screen overlay (like a snipping tool) lets you drag the area directly on
+  // your desktop. The bar itself is too small to frame anything inside.
   const beginAreaSelection = async () => {
-    if (screenStreamRef.current) {
-      setIsSelectingArea(true);
+    if (statusRef.current !== 'idle' || isSelectingArea) return;
+    if (!window.wongCapture?.selectAreaOnScreen) {
+      // Plain browser: only the ratio presets are available
+      setSourcePickerTab('area');
+      setIsSourcePickerOpen(true);
       return;
     }
-    setAwaitingArea(true);
-    await handleRequestScreen('screens');
+    setIsSelectingArea(true);
+    try {
+      const result = await window.wongCapture.selectAreaOnScreen();
+      if (!result) return; // cancelled
+      const crop: CropRegion = { enabled: true, preset: 'custom', ...result.region };
+      setCropRegion(crop);
+      compositorRef.current.updateCropRegion(crop);
+      // The area belongs to the screen the bar is on: (re)connect that screen if it isn't the one we have
+      if (result.changedSource || !screenStreamRef.current) {
+        await acquireScreenStream({ name: result.sourceName || 'Entire screen', isWindow: false });
+      }
+    } catch (err) {
+      console.warn('Area selection failed:', err);
+    } finally {
+      setIsSelectingArea(false);
+    }
   };
   const handleSelectArea = beginAreaSelection;
 
@@ -482,15 +459,9 @@ export default function App() {
         audioMixerRef.current.setSystemStream(stream, audioConfig.systemVolume);
       }
 
-      // "Frame an area" was waiting for a source: start framing now
-      if (awaitingAreaRef.current) {
-        setAwaitingArea(false);
-        setIsSelectingArea(true);
-      }
       return stream;
     } catch (err) {
       console.warn('Screen selection cancelled or failed:', err);
-      setAwaitingArea(false);
       return null;
     }
   };
@@ -502,14 +473,12 @@ export default function App() {
         const accepted = await window.wongCapture.setPreferredSource(source.id, source.display_id);
         if (!accepted) {
           console.warn('That capture source is no longer available');
-          setAwaitingArea(false);
           return;
         }
       }
       await acquireScreenStream({ name: source.name, isWindow: !source.isScreen });
     } catch (err) {
       console.error('Failed to select desktop source:', err);
-      setAwaitingArea(false);
     }
   };
 
@@ -535,8 +504,6 @@ export default function App() {
       // Automatic window adjustments on recording start
       if (settings.autoMinimizeOnRecord && typeof window !== 'undefined' && window.wongWindow) {
         window.wongWindow.minimize();
-      } else if (settings.autoSwitchToMiniBar) {
-        setIsCompact(true);
       }
 
       recordedChunksRef.current = [];
@@ -748,12 +715,6 @@ export default function App() {
   // Auto Zoom handlers
   const handleTriggerClickZoom = (normX: number, normY: number, options?: { ripple?: boolean }) => {
     compositorRef.current.triggerClickZoom(normX, normY, options);
-    setIsZoomed(compositorRef.current.getZoomState().isZoomed);
-  };
-
-  const handleResetZoom = () => {
-    compositorRef.current.resetZoom();
-    setIsZoomed(false);
   };
 
   // Clip library actions
@@ -833,12 +794,7 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape closes modals or exits selection
       if (e.key === 'Escape') {
-        if (isSelectingArea) {
-          setIsSelectingArea(false);
-          return;
-        }
         setIsSourcePickerOpen(false);
-        setAwaitingArea(false);
         setIsMixerOpen(false);
         setIsWebcamModalOpen(false);
         setIsSettingsOpen(false);
@@ -851,13 +807,6 @@ export default function App() {
       if (e.key === 'F10' || (e.altKey && (e.key === 'z' || e.key === 'Z'))) {
         e.preventDefault();
         handleTriggerClickZoom(0.5, 0.5);
-        return;
-      }
-
-      // Alt+M toggles mini bar
-      if (e.altKey && (e.key === 'm' || e.key === 'M')) {
-        e.preventDefault();
-        changeCompactMode(!isCompactRef.current);
         return;
       }
 
@@ -890,285 +839,131 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [status, screenStream, webcamStream, webcamConfig, isSelectingArea]);
 
+  // ---------------------------------------------------------------------------
+  // Floating-bar shell: the desktop window is exactly as big as what is on screen
+  // ---------------------------------------------------------------------------
+  const isDesktop = typeof window !== 'undefined' && !!window.wongWindow?.setLayout;
+  const shellRef = React.useRef<HTMLDivElement>(null);
+  const barBlockRef = React.useRef<HTMLDivElement>(null);
+  const panelOpen = isSettingsOpen || isLibraryOpen || selectedClip !== null || isMixerOpen || isWebcamModalOpen || isSourcePickerOpen;
+  const panelOpenRef = React.useRef(panelOpen);
+  panelOpenRef.current = panelOpen;
+  const reportLayoutRef = React.useRef<() => void>(() => {});
+
+  React.useLayoutEffect(() => {
+    if (!isDesktop || !shellRef.current) return;
+    document.documentElement.dataset.shell = 'bar';
+    let frame = 0;
+    let lastKey = '';
+
+    const report = () => {
+      const root = shellRef.current;
+      const bar = barBlockRef.current;
+      if (!root || !bar) return;
+      const rect = root.getBoundingClientRect();
+      // Panels (settings, clips, picker...) open directly under the bar: tell the CSS where the bar ends
+      document.documentElement.style.setProperty('--shell-bar-h', `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+
+      const menu = root.querySelector('[data-menu-open="true"]') as HTMLElement | null;
+      let width = Math.ceil(rect.width);
+      let height = Math.ceil(rect.height);
+      let expanded = menu !== null;
+      let anchor: 'top' | 'bottom' = menu?.dataset.menuUp === 'true' ? 'bottom' : 'top';
+      if (panelOpenRef.current) {
+        width = Math.max(width, 980);
+        height += 664; // panel + a little room so its shadow is not clipped
+        expanded = true;
+        anchor = 'top';
+      }
+      const key = `${width}x${height}x${expanded}x${anchor}`;
+      if (key === lastKey) return;
+      lastKey = key;
+      window.wongWindow!.setLayout!({ width, height, expanded, anchor });
+    };
+    reportLayoutRef.current = report;
+
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(report);
+    });
+    observer.observe(shellRef.current);
+    report();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [isDesktop]);
+
+  // Modals do not change the bar's own size, so announce them explicitly
+  React.useEffect(() => {
+    reportLayoutRef.current();
+  }, [panelOpen]);
+
+  const togglePin = () => {
+    const next = !isPinned;
+    setIsPinned(next);
+    window.wongWindow?.setAlwaysOnTop(next);
+  };
+
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans select-none overflow-hidden">
-      {/* Windows 11 Title Bar */}
-      <WindowsTitleBar
-        status={status}
-        isCompact={isCompact}
-        isPinned={isPinned}
-        onToggleCompact={() => changeCompactMode(!isCompact)}
-        onTogglePin={() => setIsPinned(!isPinned)}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenLibrary={() => setIsLibraryOpen(true)}
-        clipCount={clips.length}
-      />
-
-      {/* Main Workspace Body */}
-      <div className="flex-1 flex relative overflow-hidden">
-        {isCompact ? (
-          <div className="flex-1 relative flex flex-col items-center justify-between p-6 overflow-hidden bg-gradient-to-b from-neutral-950 via-neutral-900/90 to-neutral-950 select-none">
-            {/* Ambient Background Lighting */}
-            {/* soft ambient glows: plain gradients (a 120px blur filter is re-painted by the GPU every frame) */}
-            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[34rem] h-[34rem] rounded-full pointer-events-none" style={{ background: 'radial-gradient(closest-side, rgba(2,132,199,0.08), transparent)' }} />
-            <div className="absolute bottom-1/4 right-1/3 w-[28rem] h-[28rem] rounded-full pointer-events-none" style={{ background: 'radial-gradient(closest-side, rgba(225,29,72,0.07), transparent)' }} />
-
-            {/* Top Area: Centered Floating MiniBar */}
-            <div className="z-30 mt-4 max-w-full">
-              <MiniBar
-                status={status}
-                elapsedSeconds={elapsedSeconds}
-                countdownNumber={countdownNumber}
-                audioConfig={audioConfig}
-                onUpdateAudioConfig={(updates) => setAudioConfig((prev) => ({ ...prev, ...updates }))}
-                webcamConfig={webcamConfig}
-                onUpdateWebcamConfig={(updates) => setWebcamConfig((prev) => ({ ...prev, ...updates }))}
-                autoZoomConfig={autoZoomConfig}
-                onUpdateAutoZoomConfig={(updates) => {
-                  const next = { ...autoZoomConfig, ...updates };
-                  setAutoZoomConfig(next);
-                  compositorRef.current.updateAutoZoomConfig(next);
-                }}
-                cropRegion={cropRegion}
-                onChangeCropRegion={(newCrop) => {
-                  setCropRegion(newCrop);
-                  compositorRef.current.updateCropRegion(newCrop);
-                }}
-                isSelectingArea={isSelectingArea}
-                onStartAreaSelection={beginAreaSelection}
-                selectedSourceName={selectedSourceName}
-                isWindowSource={isWindowSource}
-                hasActiveScreen={screenStream !== null}
-                screenStream={screenStream}
-                settings={settings}
-                onUpdateSettings={(updates) => setSettings((prev) => ({ ...prev, ...updates }))}
-                sourceSize={sourceSize}
-                clipsCount={clips.length}
-                onOpenClips={() => setIsLibraryOpen(true)}
-                onOpenSettings={() => setIsSettingsOpen(true)}
-                onOpenMixer={() => setIsMixerOpen(true)}
-                onOpenWebcamSettings={() => setIsWebcamModalOpen(true)}
-                onSelectDisplay={handleSelectDisplay}
-                onSelectWindow={handleSelectWindow}
-                onSelectArea={handleSelectArea}
-                onStartRecording={handleStartRecording}
-                onStopRecording={handleStopRecording}
-                onTogglePause={handleTogglePause}
-                onTakeSnapshot={handleTakeSnapshot}
-                onExpandStudio={() => changeCompactMode(false)}
-                onStopScreen={handleStopScreen}
-              />
-            </div>
-
-            {/* Center Area: Status Card / Safe Monitor or Quick Start Guidance */}
-            <div className="z-20 my-auto flex flex-col items-center max-w-lg w-full text-center">
-              {screenStream ? (
-                /* Source Connected: Active Status & Safe Monitor */
-                <div className="w-full bg-neutral-900/80 border border-neutral-800 rounded-2xl p-5 shadow-2xl text-left">
-                  <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                      <div>
-                        <div className="text-xs font-bold text-white tracking-wide truncate max-w-[260px]">
-                          {selectedSourceName || 'Active Capture Source'}
-                        </div>
-                        <div className="text-[10px] text-neutral-400 font-mono">
-                          {isWindowSource ? 'Application Window' : 'Display Monitor'} • {settings.resolution.toUpperCase()} @ {settings.frameRate}fps
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleStopScreen}
-                      className="px-2 py-1 text-[11px] text-neutral-400 hover:text-rose-400 hover:bg-neutral-800 rounded transition-colors cursor-pointer"
-                      title="Disconnect Screen"
-                    >
-                      Change
-                    </button>
-                  </div>
-
-                  {/* Feed Specs & Toggles Summary */}
-                  <div className="grid grid-cols-2 gap-2 my-3 text-xs">
-                    <div className="bg-neutral-950/60 p-2.5 rounded-xl border border-neutral-800/80 flex items-center justify-between">
-                      <span className="text-neutral-400">Area Region</span>
-                      <span className="font-mono font-semibold text-neutral-200">
-                        {cropRegion.enabled ? `${cropRegion.preset.toUpperCase()} Crop` : 'Full Screen'}
-                      </span>
-                    </div>
-
-                    <div className="bg-neutral-950/60 p-2.5 rounded-xl border border-neutral-800/80 flex items-center justify-between">
-                      <span className="text-neutral-400">Auto-Zoom</span>
-                      <span className="font-mono font-semibold text-indigo-300">
-                        {autoZoomConfig.enabled ? `${autoZoomConfig.factor}x on Clicks` : 'Disabled'}
-                      </span>
-                    </div>
-
-                    <div className="bg-neutral-950/60 p-2.5 rounded-xl border border-neutral-800/80 flex items-center justify-between">
-                      <span className="text-neutral-400">Microphone</span>
-                      <span className="font-semibold text-emerald-400 flex items-center gap-1.5">
-                        {audioConfig.microphone ? 'Connected' : 'Muted'}
-                        {audioConfig.microphone && (
-                          <MicPulseDot />
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="bg-neutral-950/60 p-2.5 rounded-xl border border-neutral-800/80 flex items-center justify-between">
-                      <span className="text-neutral-400">Webcam PIP</span>
-                      <span className="font-semibold text-sky-400">
-                        {webcamConfig.enabled ? `${webcamConfig.shape} (${webcamConfig.position})` : 'Off'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Action Banner */}
-                  <div className="flex items-center justify-between pt-2 border-t border-neutral-800 text-[11px] text-neutral-400">
-                    <span className="flex items-center gap-1.5">
-                      <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200 font-mono text-[10px]">F9</kbd>
-                      <span>to Start/Stop</span>
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200 font-mono text-[10px]">F10</kbd>
-                      <span>to Zoom Cursor</span>
-                    </span>
-                    <button
-                      onClick={() => changeCompactMode(false)}
-                      className="text-sky-400 hover:text-sky-300 font-medium cursor-pointer"
-                    >
-                      Open Studio Preview →
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* No Source Connected: Quick Start Guide */
-                <div className="w-full bg-neutral-900/60 border border-neutral-800/80 rounded-2xl p-6 shadow-2xl">
-                  <div className="w-12 h-12 rounded-2xl bg-neutral-800/80 border border-neutral-700/60 flex items-center justify-center mx-auto mb-3 text-sky-400 shadow-inner">
-                    <Monitor className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-base font-bold text-white mb-1">Select a Source to Begin</h3>
-                  <p className="text-xs text-neutral-400 mb-5 leading-relaxed max-w-sm mx-auto">
-                    Choose <span className="text-sky-400 font-semibold">Display</span> for full monitors, <span className="text-sky-400 font-semibold">Window</span> for individual apps, or <span className="text-amber-400 font-semibold">Area</span> to frame a custom recording region.
-                  </p>
-
-                  <div className="flex items-center justify-center gap-2">
-                    <button
-                      onClick={handleSelectDisplay}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold border border-neutral-700/70 transition-all cursor-pointer"
-                    >
-                      <Monitor className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Display</span>
-                    </button>
-
-                    <button
-                      onClick={handleSelectWindow}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold border border-neutral-700/70 transition-all cursor-pointer"
-                    >
-                      <AppWindow className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Window</span>
-                    </button>
-
-                    <button
-                      onClick={handleSelectArea}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold border border-neutral-700/70 transition-all cursor-pointer"
-                    >
-                      <Crop className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Select Area</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Bottom Status Footer */}
-            <div className="z-20 text-[11px] text-neutral-500 font-mono flex items-center gap-4">
-              <span>WongCapture v1.0.0</span>
-              <span>•</span>
-              <span>Windows x64 Native</span>
-              <span>•</span>
-              <button 
-                onClick={() => changeCompactMode(false)} 
-                className="hover:text-neutral-300 underline cursor-pointer"
-              >
-                Switch to Full Studio Mode
-              </button>
-            </div>
-
-            {/* Interactive Area Selection Overlay (when isSelectingArea is true in Mini Bar mode) */}
-            {isSelectingArea && (
-              <div className="absolute inset-0 z-40 bg-black/70 flex items-center justify-center">
-                <div className="relative w-full h-full p-8 flex items-center justify-center">
-                  <React.Suspense fallback={null}>
-                  <SelectionToolOverlay
-                    containerWidth={typeof window !== 'undefined' ? window.innerWidth - 64 : 1200}
-                    containerHeight={typeof window !== 'undefined' ? window.innerHeight - 120 : 700}
-                    sourceWidth={sourceSize.width}
-                    sourceHeight={sourceSize.height}
-                    cropRegion={cropRegion}
-                    onChangeCropRegion={(newCrop) => {
-                      setCropRegion(newCrop);
-                      compositorRef.current.updateCropRegion(newCrop);
-                    }}
-                    isSelecting={isSelectingArea}
-                    onToggleSelecting={() => setIsSelectingArea(false)}
-                  />
-                  </React.Suspense>
-                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2">
-                    <button
-                      onClick={() => setIsSelectingArea(false)}
-                      className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs shadow-lg cursor-pointer"
-                    >
-                      Done Framing Area
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <React.Suspense fallback={<div className="flex-1" />}>
-          <StudioPreview
-            screenStream={screenStream}
-            webcamStream={webcamStream}
-            sourceName={selectedSourceName}
-            isWindowSource={isWindowSource}
-            preventMirrorLoop={settings.preventMirrorLoop}
-            status={status}
-            countdownNumber={countdownNumber}
-            elapsedSeconds={elapsedSeconds}
-            audioConfig={audioConfig}
-            webcamConfig={webcamConfig}
-            cropRegion={cropRegion}
-            onChangeCropRegion={(newCrop) => {
-              setCropRegion(newCrop);
-              compositorRef.current.updateCropRegion(newCrop);
-            }}
-            isSelectingArea={isSelectingArea}
-            onToggleSelectingArea={() => setIsSelectingArea(!isSelectingArea)}
-            autoZoomConfig={autoZoomConfig}
-            onUpdateAutoZoom={(updates) => {
-              const next = { ...autoZoomConfig, ...updates };
-              setAutoZoomConfig(next);
-              compositorRef.current.updateAutoZoomConfig(next);
-            }}
-            onTriggerClickZoom={handleTriggerClickZoom}
-            onResetZoom={handleResetZoom}
-            isZoomed={isZoomed}
-            resolution={settings.resolution}
-            frameRate={settings.frameRate}
-            format={settings.format}
-            onRequestScreen={handleRequestScreen}
-            onStopScreen={handleStopScreen}
-            onStartRecording={handleStartRecording}
-            onStopRecording={handleStopRecording}
-            onTogglePause={handleTogglePause}
-            onToggleMic={() => setAudioConfig((prev) => ({ ...prev, microphone: !prev.microphone }))}
-            onToggleWebcam={() => setWebcamConfig((prev) => ({ ...prev, enabled: !prev.enabled }))}
-            onOpenWebcamSettings={() => setIsWebcamModalOpen(true)}
-            onTakeSnapshot={handleTakeSnapshot}
-            onOpenMixer={() => setIsMixerOpen(true)}
-            onSwitchToCompact={() => changeCompactMode(true)}
-          />
-          </React.Suspense>
-        )}
+    <div
+      ref={shellRef}
+      className={`${isDesktop ? 'inline-flex flex-col items-start' : 'flex flex-col items-center pt-8'} font-sans select-none text-neutral-100`}
+    >
+      {/* The bar is the whole app. The padding leaves room for its soft shadow inside the transparent window. */}
+      <div ref={barBlockRef} className="p-3">
+        <MiniBar
+          status={status}
+          elapsedSeconds={elapsedSeconds}
+          countdownNumber={countdownNumber}
+          audioConfig={audioConfig}
+          onUpdateAudioConfig={(updates) => setAudioConfig((prev) => ({ ...prev, ...updates }))}
+          webcamConfig={webcamConfig}
+          onUpdateWebcamConfig={(updates) => setWebcamConfig((prev) => ({ ...prev, ...updates }))}
+          autoZoomConfig={autoZoomConfig}
+          onUpdateAutoZoomConfig={(updates) => {
+            const next = { ...autoZoomConfig, ...updates };
+            setAutoZoomConfig(next);
+            compositorRef.current.updateAutoZoomConfig(next);
+          }}
+          cropRegion={cropRegion}
+          onChangeCropRegion={(newCrop) => {
+            setCropRegion(newCrop);
+            compositorRef.current.updateCropRegion(newCrop);
+          }}
+          isSelectingArea={isSelectingArea}
+          onStartAreaSelection={beginAreaSelection}
+          selectedSourceName={selectedSourceName}
+          isWindowSource={isWindowSource}
+          hasActiveScreen={screenStream !== null}
+          screenStream={screenStream}
+          settings={settings}
+          onUpdateSettings={(updates) => setSettings((prev) => ({ ...prev, ...updates }))}
+          sourceSize={sourceSize}
+          clipsCount={clips.length}
+          onOpenClips={() => setIsLibraryOpen(true)}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenMixer={() => setIsMixerOpen(true)}
+          onOpenWebcamSettings={() => setIsWebcamModalOpen(true)}
+          onSelectDisplay={handleSelectDisplay}
+          onSelectWindow={handleSelectWindow}
+          onSelectArea={handleSelectArea}
+          onStartRecording={handleStartRecording}
+          onStopRecording={handleStopRecording}
+          onTogglePause={handleTogglePause}
+          onTakeSnapshot={handleTakeSnapshot}
+          onStopScreen={handleStopScreen}
+          windowControls={
+            isDesktop
+              ? {
+                  isPinned,
+                  onTogglePin: togglePin,
+                  onMinimize: () => window.wongWindow?.minimize(),
+                  onClose: () => window.wongWindow?.close(),
+                }
+              : undefined
+          }
+        />
       </div>
 
       {/* Modals are fetched the first time they open and unmount when closed (keeps memory low) */}
@@ -1228,10 +1023,7 @@ export default function App() {
         {isSourcePickerOpen && (
           <SourcePickerModal
             isOpen
-            onClose={() => {
-              setIsSourcePickerOpen(false);
-              setAwaitingArea(false);
-            }}
+            onClose={() => setIsSourcePickerOpen(false)}
             initialTab={sourcePickerTab}
             onSelectSource={handleSelectDesktopSource}
             onSelectBrowserNative={async () => {
@@ -1245,7 +1037,6 @@ export default function App() {
             }}
             onStartAreaSelection={beginAreaSelection}
             hasActiveScreen={screenStream !== null}
-            awaitingAreaFraming={awaitingAreaFraming}
             sourceWidth={sourceSize.width}
             sourceHeight={sourceSize.height}
           />

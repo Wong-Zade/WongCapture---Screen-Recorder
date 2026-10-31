@@ -214,31 +214,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Auto-Minimize Window on Record
                   </span>
                   <span className="text-[11px] text-neutral-400 block leading-tight">
-                    Minimizes WongCapture to the tray/taskbar when recording starts so your desktop stays clear.
+                    Minimizes the bar to the taskbar when recording starts. Not needed normally: the bar is already left out of your recordings.
                   </span>
                 </div>
                 <input
                   type="checkbox"
                   checked={!!settings.autoMinimizeOnRecord}
                   onChange={(e) => onUpdateSettings({ autoMinimizeOnRecord: e.target.checked })}
-                  className="mt-0.5 rounded border-neutral-700 text-sky-600 focus:ring-sky-500 bg-neutral-800"
-                />
-              </label>
-
-              {/* Auto-Switch to Mini Bar */}
-              <label className="flex items-start justify-between gap-3 cursor-pointer">
-                <div>
-                  <span className="text-xs font-medium text-neutral-200 block">
-                    Auto-Switch to Mini Bar HUD
-                  </span>
-                  <span className="text-[11px] text-neutral-400 block leading-tight">
-                    Automatically collapses to the compact Floating Mini Bar widget when recording starts.
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={!!settings.autoSwitchToMiniBar}
-                  onChange={(e) => onUpdateSettings({ autoSwitchToMiniBar: e.target.checked })}
                   className="mt-0.5 rounded border-neutral-700 text-sky-600 focus:ring-sky-500 bg-neutral-800"
                 />
               </label>

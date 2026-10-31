@@ -17,20 +17,18 @@ contextBridge.exposeInMainWorld('wongTray', {
 
 contextBridge.exposeInMainWorld('wongWindow', {
   minimize: () => ipcRenderer.send('window:minimize'),
-  maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
+  /** The window is exactly as big as the UI needs: tell the main process the size (and whether it is temporarily expanded). */
+  setLayout: (layout) => ipcRenderer.send('window:setLayout', layout),
   setAlwaysOnTop: (pinned) => ipcRenderer.send('window:pin', pinned),
   setContentProtection: (enabled) => ipcRenderer.send('window:setContentProtection', enabled),
-  onMaximizedChange: (callback) => {
-    const handler = (_event, isMax) => callback(isMax);
-    ipcRenderer.on('window:isMaximized', handler);
-    return () => ipcRenderer.removeListener('window:isMaximized', handler);
-  },
 });
 
 contextBridge.exposeInMainWorld('wongCapture', {
   getSources: () => ipcRenderer.invoke('desktop:getSources'),
   setPreferredSource: (sourceId, displayId) => ipcRenderer.invoke('desktop:setPreferredSource', sourceId, displayId),
+  /** Opens the full-screen overlay to drag out an area. Resolves null if cancelled. */
+  selectAreaOnScreen: () => ipcRenderer.invoke('area:select'),
   onAutoZoomTrigger: (callback) => {
     const handler = (_event, coords) => callback(coords);
     ipcRenderer.on('autozoom:trigger', handler);
